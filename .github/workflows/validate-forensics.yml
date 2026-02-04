@@ -44,32 +44,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Collect candidate JSON files using find for robustness
-          # De-duplicate to avoid double-validation
-          files=()
-          while IFS=  read -r -d $'\0'; do
-              files+=("$REPLY")
-          done < <(find tests audit_exports -maxdepth 2 -name "*.json" -print0 2>/dev/null | sort -uz)
+          echo "Validating forensic JSON files…"
+          files=$( (ls -1 tests/forensics/*.json 2>/dev/null || true) | sort -u )
+          for f in $files; do
+            echo " - $f"
+            node tools/validate_breakdown.mjs "$f" --pretty
+          done
 
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No forensic JSON files found. Skipping JSON validation."
+          echo "Validating ZIP bundles in audit_exports…"
+
+          if [ ! -d audit_exports ]; then
+            echo "❗ audit_exports/ directory not found — skipping ZIP validation"
           else
-            echo "Validating ${#files[@]} files:"
-            for f in "${files[@]}"; do
-              echo " - $f"
-              node tools/validate_breakdown.mjs "$f" --pretty
-            done
-          fi
-
-          # Also validate ZIP bundles in audit_exports (robust check)
-          echo "Validating ZIP bundles in audit_exports:"
-          if [ -d audit_exports ]; then
-            find audit_exports -maxdepth 2 -type f -name "*.zip" -print0 | while IFS= read -r -d '' z; do
+            find audit_exports -type f -name "*.zip" -print0 | while IFS= read -r -d '' z; do
               echo " - $z"
               node tools/validate_snapshot_bundle.mjs "$z" --pretty
             done
-          else
-            echo "Audit directory 'audit_exports' not present. Skipping ZIP validation."
           fi
 
       - name: Summary

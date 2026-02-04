@@ -150,7 +150,12 @@ const CausalForensicsTest = {
     }
 };
 
-// Auto-run if triggered via console or specific script load
-if (typeof window !== 'undefined') {
+// Node.js compatibility layer (for npm test / CI)
+if (typeof process !== 'undefined' && process.release?.name === 'node') {
+    const { normalizeBreakdown } = await import("../src/forensics/normalizeBreakdown.js");
+    global.CouplingEngine = { normalizeBreakdown };
+    CausalForensicsTest.run();
+} else if (typeof window !== 'undefined') {
+    // Browser environment
     window.runCausalTests = () => CausalForensicsTest.run();
 }

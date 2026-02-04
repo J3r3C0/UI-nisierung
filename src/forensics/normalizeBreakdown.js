@@ -45,6 +45,18 @@ export function normalizeBreakdown(breakdown) {
         const reason = mapReason(item?.reason);
         const severity = item?.severity || DEFAULT_SEVERITY[reason] || "warn";
 
+        const previewRaw = item.preview || {};
+        const preview = {
+            mode: previewRaw.mode ?? item.layer ?? item.impact?.mode ?? null,
+            kind: previewRaw.kind ?? item.impact?.kind ?? item.impact?.function ?? null,
+            priority: previewRaw.priority ?? item.priority ?? null,
+            weight: previewRaw.weight ?? item.impact?.weight ?? null,
+            gain: previewRaw.gain ?? item.impact?.gain ?? null,
+            src: previewRaw.src ?? item.src?.value ?? null,
+            would_add: previewRaw.would_add ?? null,
+            would_factor: previewRaw.would_factor ?? null
+        };
+
         return {
             edge_id: String(item?.edge_id ?? "unknown"),
             target_id: item?.target_id || item?.to || null,
@@ -64,16 +76,7 @@ export function normalizeBreakdown(breakdown) {
                 end: item.window.end ?? null,
                 now: item.window.now ?? tNow
             } : null,
-            preview: item.preview ? {
-                mode: item.preview.mode ?? (item.layer || null),
-                kind: item.preview.kind ?? (item.impact?.kind || null),
-                priority: item.preview.priority ?? null,
-                weight: item.preview.weight ?? (item.impact?.weight || null),
-                gain: item.preview.gain ?? (item.impact?.gain || null),
-                src: item.preview.src ?? (item.src?.value || null),
-                would_add: item.preview.would_add ?? null,
-                would_factor: item.preview.would_factor ?? null
-            } : null
+            preview: preview
         };
     });
 

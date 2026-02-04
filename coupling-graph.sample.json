@@ -1,0 +1,117 @@
+{
+    "meta": {
+        "id": "coupling-graph-v1",
+        "version": "1.0",
+        "timebase": "video"
+    },
+    "nodes": [
+        {
+            "value_id": "delta_resonance"
+        },
+        {
+            "value_id": "theta_intent"
+        },
+        {
+            "value_id": "sigma_movement"
+        }
+    ],
+    "edges": [
+        {
+            "id": "e_delta_to_theta",
+            "type": "causal",
+            "from": "delta_resonance",
+            "to": "theta_intent",
+            "alignment": {
+                "mode": "soft_sync",
+                "offset_ms": 2000,
+                "max_skew_ms": 250
+            },
+            "impact": {
+                "function": "linear",
+                "gain": 0.35,
+                "clamp": [
+                    0,
+                    100
+                ]
+            },
+            "aggregation": {
+                "when_multiple_edges": "sum_then_clamp"
+            },
+            "guardrails": {
+                "enabled": true,
+                "min_confidence": 0.6
+            }
+        },
+        {
+            "id": "e_spike_burst_boost_theta",
+            "type": "event",
+            "from": "delta_resonance",
+            "to": "theta_intent",
+            "alignment": {
+                "mode": "soft_sync",
+                "offset_ms": 0,
+                "max_skew_ms": 250
+            },
+            "impact": {
+                "function": "add",
+                "gain": 18,
+                "clamp": [
+                    0,
+                    100
+                ]
+            },
+            "aggregation": {
+                "when_multiple_edges": "sum_then_clamp"
+            },
+            "guardrails": {
+                "enabled": true,
+                "min_confidence": 0.6
+            },
+            "trigger": {
+                "kind": "spike",
+                "delta": 10,
+                "hold_ms": 400
+            }
+        },
+        {
+            "id": "e_scene_boundary_pulse_theta",
+            "type": "event",
+            "from": "delta_resonance",
+            "to": "theta_intent",
+            "alignment": {
+                "mode": "soft_sync",
+                "offset_ms": 0,
+                "max_skew_ms": 250
+            },
+            "impact": {
+                "function": "add",
+                "gain": 12,
+                "clamp": [
+                    0,
+                    100
+                ]
+            },
+            "aggregation": {
+                "when_multiple_edges": "sum_then_clamp"
+            },
+            "guardrails": {
+                "enabled": true,
+                "min_confidence": 0.6
+            },
+            "trigger": {
+                "kind": "scene_boundary",
+                "hold_ms": 350,
+                "scene": {
+                    "mode": "timeline_marks",
+                    "marks_ms": [
+                        0,
+                        15000,
+                        32000,
+                        48000,
+                        70000
+                    ]
+                }
+            }
+        }
+    ]
+}

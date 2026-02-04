@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premium Video Analysis UI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Top Section: Timelines -->
+        <header class="timelines-grid" id="timelines">
+            <!-- Timelines will be injected by JavaScript -->
+        </header>
+
+        <!-- Middle Section: Main Interface -->
+        <main class="main-layout">
+            <aside class="side-panel sidebar-left">
+                <div class="panel-header">
+                    <h2>Analysis</h2>
+                    <span class="sub-header">Data over time</span>
+                </div>
+                <div class="analysis-content">
+                    <div class="metric-selector" id="metric-list-left">
+                        <!-- Metric tags will be injected here -->
+                    </div>
+                    <div class="graph-container">
+                        <div class="graph-y-axis">
+                            <span>100</span>
+                            <span>50</span>
+                            <span>0</span>
+                        </div>
+                        <svg class="graph-svg" id="analysis-graph" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <path class="graph-path" id="graph-path" d="M 0,100 L 100,0" fill="none" />
+                            <div class="graph-grid"></div>
+                        </svg>
+                        <div class="graph-x-label">Vergangene Zeit</div>
+                    </div>
+                </div>
+            </aside>
+
+            <section class="video-preview">
+                <div class="video-container">
+                    <video id="main-video" src="Video/WhatsApp Video 2026-02-01 at 20.31.34.mp4" playsinline></video>
+                    <div class="video-overlay" id="video-overlay">
+                        <div class="play-button" id="play-pause-btn">
+                            <svg viewBox="0 0 24 24" fill="currentColor" id="play-icon">
+                                <path d="M8 5v14l11-7z" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="side-panel sidebar-right">
+                <div class="panel-header">
+                    <h2>Management</h2>
+                    <span class="sub-header">Configure Metrics</span>
+                </div>
+                <div class="management-content">
+                    <div class="active-metrics-container" id="active-metrics-list">
+                        <!-- List of metrics with Edit/Delete buttons -->
+                    </div>
+                    <button class="btn-add-metric">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Add New Metric
+                    </button>
+                </div>
+            </aside>
+        </main>
+
+        <!-- Bottom Section: Time Display -->
+        <footer class="controls-footer">
+            <div class="time-slider-container">
+                <div class="time-info">
+                    <span id="current-time">00:00</span>
+                    <span id="total-time">00:00</span>
+                </div>
+                <div class="slider-track">
+                    <div class="slider-fill" style="width: 0%;"></div>
+                    <div class="slider-thumb" style="left: 0%;"></div>
+                </div>
+                <div class="ticks">
+                    <!-- Ticks for the duration -->
+                </div>
+            </div>
+        </footer>
+    </div>
+    <!-- Add Metric Modal -->
+    <div class="modal-overlay" id="add-metric-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>New Metric</h3>
+                <button class="close-modal" id="close-modal">&times;</button>
+            </div>
+            <form id="add-metric-form">
+                <div class="form-group">
+                    <label>Label / Name</label>
+                    <input type="text" id="metric-label" placeholder="e.g. Gamma_X" required>
+                </div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="metric-type">
+                        <option value="Raw">Raw Data</option>
+                        <option value="Calculated">Calculated</option>
+                        <option value="Sensor">Sensor API</option>
+                        <option value="Predicted">Predicted</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Initial Value (%)</label>
+                    <input type="range" id="metric-init-value" min="0" max="100" value="50">
+                </div>
+                <button type="submit" class="btn-submit">Initialize Metric</button>
+            </form>
+        </div>
+    </div>
+    <script src="validator.js"></script>
+    <script src="coupling.js"></script>
+    <script src="coupling-validator.js"></script>
+    <script src="event-triggers.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,272 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "coupling-schema.json",
+    "title": "CouplingGraph v1",
+    "type": "object",
+    "required": [
+        "meta",
+        "nodes",
+        "edges"
+    ],
+    "properties": {
+        "meta": {
+            "type": "object",
+            "required": [
+                "id",
+                "version",
+                "timebase"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "timebase": {
+                    "type": "string",
+                    "enum": [
+                        "video",
+                        "system"
+                    ]
+                }
+            }
+        },
+        "nodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "value_id"
+                ],
+                "properties": {
+                    "value_id": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "type",
+                    "from",
+                    "to",
+                    "alignment",
+                    "impact",
+                    "aggregation",
+                    "guardrails"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "hard_sync",
+                            "soft_sync",
+                            "event",
+                            "causal"
+                        ]
+                    },
+                    "from": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "to": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "alignment": {
+                        "type": "object",
+                        "required": [
+                            "mode",
+                            "offset_ms",
+                            "max_skew_ms"
+                        ],
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "enum": [
+                                    "hard_sync",
+                                    "soft_sync"
+                                ]
+                            },
+                            "offset_ms": {
+                                "type": "integer"
+                            },
+                            "max_skew_ms": {
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "impact": {
+                        "type": "object",
+                        "required": [
+                            "function",
+                            "gain",
+                            "clamp"
+                        ],
+                        "properties": {
+                            "function": {
+                                "type": "string",
+                                "enum": [
+                                    "linear",
+                                    "add",
+                                    "mul"
+                                ]
+                            },
+                            "gain": {
+                                "type": "number"
+                            },
+                            "clamp": {
+                                "type": "array",
+                                "minItems": 2,
+                                "maxItems": 2
+                            }
+                        }
+                    },
+                    "aggregation": {
+                        "type": "object",
+                        "required": [
+                            "when_multiple_edges"
+                        ],
+                        "properties": {
+                            "when_multiple_edges": {
+                                "type": "string",
+                                "enum": [
+                                    "sum_then_clamp",
+                                    "max",
+                                    "mean"
+                                ]
+                            }
+                        }
+                    },
+                    "guardrails": {
+                        "type": "object",
+                        "required": [
+                            "enabled",
+                            "min_confidence"
+                        ],
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean"
+                            },
+                            "min_confidence": {
+                                "type": "number"
+                            }
+                        }
+                    },
+                    "trigger": {
+                        "type": "object",
+                        "required": [
+                            "kind"
+                        ],
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "threshold_crossing",
+                                    "spike",
+                                    "window_mean_above",
+                                    "scene_boundary"
+                                ]
+                            },
+                            "direction": {
+                                "type": "string",
+                                "enum": [
+                                    "rising",
+                                    "falling",
+                                    "both"
+                                ]
+                            },
+                            "threshold": {
+                                "type": "number"
+                            },
+                            "delta": {
+                                "type": "number"
+                            },
+                            "window_ms": {
+                                "type": "integer"
+                            },
+                            "hold_ms": {
+                                "type": "integer"
+                            },
+                            "scene": {
+                                "type": "object",
+                                "required": [
+                                    "mode"
+                                ],
+                                "properties": {
+                                    "mode": {
+                                        "type": "string",
+                                        "enum": [
+                                            "timeline_marks",
+                                            "frame_index_mod",
+                                            "manual_flag"
+                                        ]
+                                    },
+                                    "marks_ms": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": {
+                                "type": {
+                                    "const": "event"
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": [
+                                "trigger"
+                            ]
+                        },
+                        "else": {
+                            "not": {
+                                "required": [
+                                    "trigger"
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "if": {
+                            "properties": {
+                                "trigger": {
+                                    "properties": {
+                                        "kind": {
+                                            "const": "threshold_crossing"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "then": {
+                            "required": [
+                                "trigger"
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}

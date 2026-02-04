@@ -1,6 +1,6 @@
 /**
  * coupling-validator.js
- * Browser-compatible simplified validator for CouplingGraph.
+ * Causal++ Spec v1 Compliant Validator
  */
 
 const CouplingValidator = {
@@ -15,7 +15,17 @@ const CouplingValidator = {
         graph.edges.forEach(edge => {
             if (!nodeIds.has(edge.from)) errors.push(`Edge ${edge.id}: Source node ${edge.from} not in nodes list`);
             if (!nodeIds.has(edge.to)) errors.push(`Edge ${edge.id}: Target node ${edge.to} not in nodes list`);
-            if (edge.type === "event" && !edge.trigger) errors.push(`Edge ${edge.id}: Event type requires a trigger`);
+
+            if (edge.type === "event" && !edge.trigger) {
+                errors.push(`Edge ${edge.id}: Event type requires a trigger`);
+            }
+
+            // ✅ Causal++ Spec Rule: kind="set" is forbidden in blend mode
+            const mode = edge.impact?.mode || graph.meta?.defaults?.impact_mode || "blend";
+            const kind = edge.impact?.function || "add";
+            if (mode === "blend" && kind === "set") {
+                errors.push(`Edge ${edge.id}: Causal++ Violation - 'set' function is forbidden in 'blend' mode`);
+            }
         });
 
         return {

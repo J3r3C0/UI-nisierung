@@ -1,6 +1,6 @@
 /**
  * coupling.js
- * Causal++ Enhanced Engine.
+ * Causal++ Spec v1 Engine Implementation.
  */
 
 const CouplingEngine = {
@@ -9,7 +9,6 @@ const CouplingEngine = {
         if (tMs <= series[0].t) return series[0].v;
         if (tMs >= series[series.length - 1].t) return series[series.length - 1].v;
 
-        // Binary search for efficiency
         let low = 0, high = series.length - 1;
         while (low <= high) {
             let mid = Math.floor((low + high) / 2);
@@ -18,7 +17,6 @@ const CouplingEngine = {
             else high = mid - 1;
         }
 
-        // Interpolate
         const p1 = series[high];
         const p2 = series[low];
         const ratio = (tMs - p1.t) / (p2.t - p1.t);
@@ -34,30 +32,20 @@ const CouplingEngine = {
         if (sourceVal === null) return 0;
 
         const gain = edge.impact?.gain ?? 1.0;
-        let out = sourceVal * gain;
-
-        // Custom impact functions
-        const fn = edge.impact?.function || "linear";
-        if (fn === "add") out = sourceVal * gain;
-        else if (fn === "mul") out = sourceVal * gain;
-
-        return out;
+        // In Blend Spec v1, computeEdgeImpact returns the naked contribution (gain * src)
+        return sourceVal * gain;
     },
 
     applyCouplingGraph(valuesById, graph, tNowMs, triggerActiveEdgeIds, triggerRuntime) {
         const result = {};
-        const incoming = {};
-
-        // 1. Identify all active impacts (including Causal++ logic)
-        const activeImpacts = []; // { to, mode, kind, value, weight, priority, id }
-
-        // Map edges for quick lookup
+        const activeImpacts = [];
         const edgesById = {};
         (graph.edges || []).forEach(e => edgesById[e.id] = e);
 
-        // Process fired events from runtime
+        // 1. Gather Candidate Impacts
         if (triggerRuntime && triggerRuntime.fired) {
             const globalMaxSkew = graph.meta?.defaults?.max_skew_ms ?? 250;
+            const globalMode = graph.meta?.defaults?.impact_mode || "blend";
 
             triggerRuntime.fired.forEach(ev => {
                 const edge = edgesById[ev.edgeId];
@@ -70,81 +58,96 @@ const CouplingEngine = {
                 const tEffective = ev.tMs + delay;
                 const tEnd = tEffective + hold;
 
-                // Gate: is it currently active and within window?
                 if (tNowMs >= tEffective && tNowMs <= tEnd) {
-                    const maxSkew = edge.gate?.max_skew_ms ?? globalMaxSkew;
+                    // ✅ Spec Rule: effective_max_skew precedence
+                    const maxSkew = edge.gate?.max_skew_ms ?? edge.alignment?.max_skew_ms ?? globalMaxSkew;
 
-                    // Gate check: skew and future leakage
+                    // Gate check: skew and future leakage protection
                     if (Math.abs(tEffective - ev.tMs) <= maxSkew && tEffective <= tNowMs + maxSkew) {
                         activeImpacts.push({
                             to: edge.to,
-                            mode: edge.impact?.mode || graph.meta?.defaults?.impact_mode || "blend",
+                            mode: edge.impact?.mode || globalMode,
                             kind: edge.impact?.function || "add",
                             value: this.computeEdgeImpact(valuesById, edge, tNowMs),
                             weight: edge.impact?.weight ?? 1.0,
                             priority: edge.priority || 0,
                             id: edge.id,
-                            clamp: edge.impact?.clamp || [0, 100]
+                            clamp: edge.impact?.clamp || null
                         });
                     }
                 }
             });
         }
 
-        // Process constant causal/sync edges (baseline coupling)
+        // Add constant causal edges to candidates
         (graph.edges || []).forEach(edge => {
-            if (edge.type === "causal" || edge.type === "soft_sync" || edge.type === "hard_sync") {
+            if (edge.type === "causal" || edge.type === "soft_sync") {
                 activeImpacts.push({
                     to: edge.to,
-                    mode: "blend", // baseline causal edges always blend in this model
-                    kind: edge.impact?.function || "linear",
+                    mode: "blend", // baseline causal always modulates
+                    kind: edge.impact?.function || "add",
                     value: this.computeEdgeImpact(valuesById, edge, tNowMs),
                     weight: edge.impact?.weight ?? 1.0,
                     priority: edge.priority || 0,
                     id: edge.id,
-                    clamp: edge.impact?.clamp || [0, 100]
+                    clamp: edge.impact?.clamp || null
                 });
             }
         });
 
-        // 2. Resolve Impacts for each target node
+        // 2. Resolve Impacts per Target
         const targetNodes = new Set((graph.nodes || []).map(n => n.value_id));
         targetNodes.forEach(toId => {
             const impacts = activeImpacts.filter(i => i.to === toId);
-            const baseValue = valuesById[toId]?.obj.value.current || 0;
+            const targetObj = valuesById[toId]?.obj;
+            const baseValue = targetObj?.value.current || 0;
+            const range = targetObj?.semantics?.range || { min: 0, max: 100 };
 
             if (impacts.length === 0) {
                 result[toId] = baseValue;
                 return;
             }
 
-            // Priority Arbitration for Replace
-            const replaceImpacts = impacts.filter(i => i.mode === "replace");
-            if (replaceImpacts.length > 0) {
-                // Winner: 1) Priority 2) Latest ID (lexical tie break)
-                replaceImpacts.sort((a, b) => (b.priority - a.priority) || b.id.localeCompare(a.id));
-                const winner = replaceImpacts[0];
+            // ✅ Spec Rule: Deterministic Sort (priority desc, id asc)
+            impacts.sort((a, b) => (b.priority - a.priority) || a.id.localeCompare(b.id));
 
-                if (winner.kind === "set") result[toId] = winner.value;
-                else if (winner.kind === "mul") result[toId] = baseValue * winner.value;
-                else result[toId] = baseValue + winner.value;
+            // ✅ Spec Rule: Replace Wins over Blend
+            const replaceWinner = impacts.find(i => i.mode === "replace");
+            if (replaceWinner) {
+                let val = baseValue;
+                if (replaceWinner.kind === "set") val = replaceWinner.value;
+                else if (replaceWinner.kind === "mul") val = baseValue * replaceWinner.value;
+                else val = baseValue + replaceWinner.value;
 
-                // Clamp replace result
-                result[toId] = Math.max(winner.clamp[0], Math.min(winner.clamp[1], result[toId]));
+                // Clamp Replace result
+                const edgeClamp = replaceWinner.clamp;
+                const finalMin = edgeClamp ? edgeClamp[0] : range.min;
+                const finalMax = edgeClamp ? edgeClamp[1] : range.max;
+                result[toId] = Math.max(finalMin, Math.min(finalMax, val));
             } else {
-                // Blend mode: Sum weight-based additions
-                let sumAdd = 0;
+                // ✅ Spec Rule: Blend Resolution
+                let deltaAdd = 0;
                 let mulFactor = 1.0;
-                let clampRange = [0, 100];
+
+                const blendNormalize = graph.meta?.defaults?.blend_normalize || false;
+                const totalWeight = impacts.reduce((acc, i) => acc + i.weight, 0);
 
                 impacts.forEach(i => {
-                    if (i.kind === "add" || i.kind === "linear") sumAdd += (i.value * i.weight);
-                    else if (i.kind === "mul") mulFactor *= (1 + i.value * i.weight);
-                    clampRange = i.clamp; // taking the last one defined or default
+                    const w = blendNormalize ? (i.weight / totalWeight) : i.weight;
+
+                    if (i.kind === "add" || i.kind === "linear") {
+                        deltaAdd += (i.value * w);
+                    } else if (i.kind === "mul") {
+                        // ✅ Spec Rule: Relative multiplication (1 + x)
+                        mulFactor *= (1 + i.value * w);
+                    }
                 });
 
-                let blended = (baseValue + sumAdd) * mulFactor;
-                result[toId] = Math.max(clampRange[0], Math.min(clampRange[1], blended));
+                // ✅ Spec Rule: ADD before MUL
+                let blended = (baseValue + deltaAdd) * mulFactor;
+
+                // Final Clamp
+                result[toId] = Math.max(range.min, Math.min(range.max, blended));
             }
         });
 

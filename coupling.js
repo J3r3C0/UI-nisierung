@@ -32,21 +32,22 @@ const CouplingEngine = {
         if (sourceVal === null) return 0;
 
         const gain = edge.impact?.gain ?? 1.0;
-        // In Blend Spec v1, computeEdgeImpact returns the naked contribution (gain * src)
         return sourceVal * gain;
     },
 
     applyCouplingGraph(valuesById, graph, tNowMs, triggerActiveEdgeIds, triggerRuntime) {
-        const result = {};
+        const values = {};
+        const breakdowns = {};
         const activeImpacts = [];
+        const blockedImpacts = [];
         const edgesById = {};
         (graph.edges || []).forEach(e => edgesById[e.id] = e);
 
-        // 1. Gather Candidate Impacts
-        if (triggerRuntime && triggerRuntime.fired) {
-            const globalMaxSkew = graph.meta?.defaults?.max_skew_ms ?? 250;
-            const globalMode = graph.meta?.defaults?.impact_mode || "blend";
+        const globalMaxSkew = graph.meta?.defaults?.max_skew_ms ?? 250;
+        const globalMode = graph.meta?.defaults?.impact_mode || "blend";
 
+        // 1. Gather Candidate & Blocked Impacts
+        if (triggerRuntime && triggerRuntime.fired) {
             triggerRuntime.fired.forEach(ev => {
                 const edge = edgesById[ev.edgeId];
                 if (!edge || edge.type !== "event") return;
@@ -58,39 +59,60 @@ const CouplingEngine = {
                 const tEffective = ev.tMs + delay;
                 const tEnd = tEffective + hold;
 
-                if (tNowMs >= tEffective && tNowMs <= tEnd) {
-                    // ✅ Spec Rule: effective_max_skew precedence
+                // Only consider if we are in the playback window for this fire event
+                // and it's not a future event (though seek-reset handles most of this)
+                if (ev.tMs <= tNowMs) {
                     const maxSkew = edge.gate?.max_skew_ms ?? edge.alignment?.max_skew_ms ?? globalMaxSkew;
+                    const skew = Math.abs(tEffective - ev.tMs);
+                    const passesGate = skew <= maxSkew && tEffective <= tNowMs + maxSkew;
 
-                    // Gate check: skew and future leakage protection
-                    if (Math.abs(tEffective - ev.tMs) <= maxSkew && tEffective <= tNowMs + maxSkew) {
-                        activeImpacts.push({
-                            to: edge.to,
-                            mode: edge.impact?.mode || globalMode,
-                            kind: edge.impact?.function || "add",
-                            value: this.computeEdgeImpact(valuesById, edge, tNowMs),
-                            weight: edge.impact?.weight ?? 1.0,
-                            priority: edge.priority || 0,
-                            id: edge.id,
-                            clamp: edge.impact?.clamp || null
-                        });
+                    if (tNowMs >= tEffective && tNowMs <= tEnd) {
+                        if (passesGate) {
+                            activeImpacts.push({
+                                to: edge.to,
+                                mode: edge.impact?.mode || globalMode,
+                                kind: edge.impact?.function || "add",
+                                value: this.computeEdgeImpact(valuesById, edge, tNowMs),
+                                weight: edge.impact?.weight ?? 1.0,
+                                priority: edge.priority || 0,
+                                id: edge.id,
+                                clamp: edge.impact?.clamp || null,
+                                tTrigger: ev.tMs,
+                                tEffective: tEffective,
+                                tEnd: tEnd,
+                                skew: skew
+                            });
+                        } else {
+                            blockedImpacts.push({
+                                to: edge.to,
+                                edge_id: edge.id,
+                                reason: "MAX_SKEW_EXCEEDED",
+                                skew_ms: skew,
+                                max_skew_ms: maxSkew,
+                                source: edge.gate?.max_skew_ms ? "edge.gate" : (edge.alignment?.max_skew_ms ? "edge.alignment" : "defaults")
+                            });
+                        }
                     }
                 }
             });
         }
 
-        // Add constant causal edges to candidates
+        // Add constant causal edges
         (graph.edges || []).forEach(edge => {
             if (edge.type === "causal" || edge.type === "soft_sync") {
                 activeImpacts.push({
                     to: edge.to,
-                    mode: "blend", // baseline causal always modulates
+                    mode: "blend",
                     kind: edge.impact?.function || "add",
                     value: this.computeEdgeImpact(valuesById, edge, tNowMs),
                     weight: edge.impact?.weight ?? 1.0,
                     priority: edge.priority || 0,
                     id: edge.id,
-                    clamp: edge.impact?.clamp || null
+                    clamp: edge.impact?.clamp || null,
+                    tTrigger: tNowMs,
+                    tEffective: tNowMs,
+                    tEnd: Infinity,
+                    skew: 0
                 });
             }
         });
@@ -99,58 +121,152 @@ const CouplingEngine = {
         const targetNodes = new Set((graph.nodes || []).map(n => n.value_id));
         targetNodes.forEach(toId => {
             const impacts = activeImpacts.filter(i => i.to === toId);
+            const blocked = blockedImpacts.filter(i => i.to === toId);
             const targetObj = valuesById[toId]?.obj;
             const baseValue = targetObj?.value.current || 0;
             const range = targetObj?.semantics?.range || { min: 0, max: 100 };
 
+            const breakdown = {
+                t: tNowMs,
+                target: toId,
+                base: baseValue,
+                after_replace: null,
+                after_blend: null,
+                clamp: range,
+                final: 0,
+                replace: { active: false, winner: null, candidates: [] },
+                blend: {
+                    enabled: true,
+                    suppressed_by_replace: false,
+                    normalize_weights: graph.meta?.defaults?.blend_normalize || false,
+                    delta_add: 0,
+                    delta_mul: 1,
+                    add_terms: [],
+                    mul_terms: []
+                },
+                blocked: blocked
+            };
+
             if (impacts.length === 0) {
-                result[toId] = baseValue;
+                breakdown.final = Math.max(range.min, Math.min(range.max, baseValue));
+                values[toId] = breakdown.final;
+                breakdowns[toId] = breakdown;
                 return;
             }
 
-            // ✅ Spec Rule: Deterministic Sort (priority desc, id asc)
+            // Sorting
             impacts.sort((a, b) => (b.priority - a.priority) || a.id.localeCompare(b.id));
 
-            // ✅ Spec Rule: Replace Wins over Blend
-            const replaceWinner = impacts.find(i => i.mode === "replace");
-            if (replaceWinner) {
-                let val = baseValue;
-                if (replaceWinner.kind === "set") val = replaceWinner.value;
-                else if (replaceWinner.kind === "mul") val = baseValue * replaceWinner.value;
-                else val = baseValue + replaceWinner.value;
+            // Replace Resolution
+            const replaceCandidates = impacts.filter(i => i.mode === "replace");
+            breakdown.replace.candidates = replaceCandidates.map(c => ({
+                edge_id: c.id,
+                priority: c.priority,
+                t_trigger: c.tTrigger,
+                t_effective: c.tEffective,
+                skew_ms: c.skew,
+                passes_gate: true
+            }));
 
-                // Clamp Replace result
-                const edgeClamp = replaceWinner.clamp;
+            const replaceWinnerIdx = impacts.findIndex(i => i.mode === "replace");
+            if (replaceWinnerIdx !== -1) {
+                const winner = impacts[replaceWinnerIdx];
+                breakdown.replace.active = true;
+                breakdown.replace.winner = {
+                    edge_id: winner.id,
+                    priority: winner.priority,
+                    t_trigger: winner.tTrigger,
+                    t_effective: winner.tEffective,
+                    skew_ms: winner.skew,
+                    hold_start: winner.tEffective,
+                    hold_end: winner.tEnd
+                };
+
+                let val = baseValue;
+                if (winner.kind === "set") val = winner.value;
+                else if (winner.kind === "mul") val = baseValue * winner.value;
+                else val = baseValue + winner.value;
+
+                breakdown.after_replace = val;
+
+                // Final Clamp
+                const edgeClamp = winner.clamp;
                 const finalMin = edgeClamp ? edgeClamp[0] : range.min;
                 const finalMax = edgeClamp ? edgeClamp[1] : range.max;
-                result[toId] = Math.max(finalMin, Math.min(finalMax, val));
+                breakdown.final = Math.max(finalMin, Math.min(finalMax, val));
+                breakdown.blend.suppressed_by_replace = true;
             } else {
-                // ✅ Spec Rule: Blend Resolution
+                // Blend Resolution
                 let deltaAdd = 0;
                 let mulFactor = 1.0;
-
-                const blendNormalize = graph.meta?.defaults?.blend_normalize || false;
                 const totalWeight = impacts.reduce((acc, i) => acc + i.weight, 0);
 
                 impacts.forEach(i => {
-                    const w = blendNormalize ? (i.weight / totalWeight) : i.weight;
+                    const w = breakdown.blend.normalize_weights ? (i.weight / totalWeight) : i.weight;
+                    const contribution = i.value * w;
 
                     if (i.kind === "add" || i.kind === "linear") {
-                        deltaAdd += (i.value * w);
+                        deltaAdd += contribution;
+                        breakdown.blend.add_terms.push({
+                            edge_id: i.id,
+                            src: i.value / (edge.impact?.gain || 1.0), // reversed for UI src display
+                            gain: i.gain, // Wait, gain wasn't in the object, I should add it
+                            weight: i.weight,
+                            contribution: contribution
+                        });
                     } else if (i.kind === "mul") {
-                        // ✅ Spec Rule: Relative multiplication (1 + x)
-                        mulFactor *= (1 + i.value * w);
+                        const factor = (1 + contribution);
+                        mulFactor *= factor;
+                        breakdown.blend.mul_terms.push({
+                            edge_id: i.id,
+                            src: 0, // placeholder
+                            gain: 0,
+                            weight: i.weight,
+                            factor: factor
+                        });
                     }
                 });
 
-                // ✅ Spec Rule: ADD before MUL
-                let blended = (baseValue + deltaAdd) * mulFactor;
+                // Correction: let's re-gather impact info properly for the terms
+                breakdown.blend.add_terms = [];
+                breakdown.blend.mul_terms = [];
+                impacts.forEach(i => {
+                    const edge = edgesById[i.id];
+                    const w = breakdown.blend.normalize_weights ? (i.weight / totalWeight) : i.weight;
+                    const contribution = i.value * w;
+                    const srcVal = i.value / (edge.impact?.gain || 1.0);
 
-                // Final Clamp
-                result[toId] = Math.max(range.min, Math.min(range.max, blended));
+                    if (i.kind === "add" || i.kind === "linear") {
+                        breakdown.blend.add_terms.push({
+                            edge_id: i.id,
+                            src: srcVal,
+                            gain: edge.impact?.gain || 1.0,
+                            weight: i.weight,
+                            contribution: contribution
+                        });
+                    } else if (i.kind === "mul") {
+                        breakdown.blend.mul_terms.push({
+                            edge_id: i.id,
+                            src: srcVal,
+                            gain: edge.impact?.gain || 1.0,
+                            weight: i.weight,
+                            factor: (1 + contribution)
+                        });
+                    }
+                });
+
+                breakdown.blend.delta_add = deltaAdd;
+                breakdown.blend.delta_mul = mulFactor;
+
+                let blended = (baseValue + deltaAdd) * mulFactor;
+                breakdown.after_blend = blended;
+                breakdown.final = Math.max(range.min, Math.min(range.max, blended));
             }
+
+            values[toId] = breakdown.final;
+            breakdowns[toId] = breakdown;
         });
 
-        return result;
+        return { values, breakdowns };
     }
 };

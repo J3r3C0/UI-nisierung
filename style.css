@@ -155,7 +155,7 @@ body {
 .active-selection-label {
     font-size: 1rem;
     font-weight: 600;
-    margin-bottom: 2rem;
+    margin-bottom: 0.5rem;
     color: white;
 }
 
@@ -521,4 +521,42 @@ body {
     background-image: linear-gradient(to right, var(--text-secondary) 1px, transparent 1px);
     background-size: 10% 100%;
     opacity: 0.2;
+}
+
+/* Event Visuals */
+.event-marker {
+    stroke: var(--accent-color);
+    stroke-width: 1.5px;
+    stroke-dasharray: 4 2;
+    opacity: 0.8;
+}
+
+.trigger-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.trigger-indicator {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background: rgba(0, 242, 255, 0.15);
+    color: var(--accent-color);
+    border: 1px solid var(--accent-color);
+    animation: trigger-pulse 0.6s ease-out infinite alternate;
+}
+
+@keyframes trigger-pulse {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 rgba(0, 242, 255, 0);
+    }
+
+    100% {
+        transform: scale(1.05);
+        box-shadow: 0 0 10px rgba(0, 242, 255, 0.4);
+    }
 }

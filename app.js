@@ -17,11 +17,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     let couplingGraph = { meta: {}, nodes: [], edges: [] };
 
     try {
-        const response = await fetch('coupling-graph.sample.json');
+        const response = await fetch('coupling-graph.json');
         couplingGraph = await response.json();
-    } catch (e) { console.warn("Graph load failed", e); }
+    } catch (e) {
+        console.warn("Graph load failed, using fallback", e);
+        couplingGraph = { meta: { id: "fallback" }, nodes: [], edges: [] };
+    }
 
-    // Config for timelines - Normalized to Wert-Schema v1 (Step 135)
+    // Config for timelines - Normalized to Wert-Schema v1
     let timelineData = [
         {
             ...ValueValidator.createSkeleton('delta_resonance', 'Delta Resonance', 'perception.core'),
@@ -127,9 +130,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderAll();
     };
 
-    function drawGraph(label, tNowMs) {
+    function drawGraph(label, tNowMs, activeEdgeIds = new Set()) {
         const metric = timelineData.find(m => m.label === label);
         if (!metric) return;
+
+        // Clear previous event markers
+        const existingMarkers = document.querySelectorAll('.event-marker');
+        existingMarkers.forEach(m => m.remove());
+
         const visibleSeries = metric.value.series.filter(p => p.t_ms <= tNowMs);
         let pathData = [];
         if (visibleSeries.length > 0) {
@@ -139,27 +147,59 @@ document.addEventListener('DOMContentLoaded', async () => {
                 pathData.push(`${x},${y}`);
             });
             graphPath.setAttribute('d', `M ${pathData.join(' L ')}`);
+
+            // Draw Event Markers
+            couplingGraph.edges.forEach(edge => {
+                if ((edge.from === metric.id || edge.to === metric.id) && activeEdgeIds.has(edge.id)) {
+                    const xTrigger = (tNowMs / durationMs) * 100;
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", xTrigger);
+                    line.setAttribute("y1", "0");
+                    line.setAttribute("x2", xTrigger);
+                    line.setAttribute("y2", "100");
+                    line.setAttribute("class", "event-marker");
+                    document.getElementById('analysis-graph').appendChild(line);
+                }
+            });
         } else { graphPath.setAttribute('d', ''); }
+    }
+
+    function renderActiveTriggers(activeEdgeIds) {
+        const container = document.querySelector('.active-selection-label');
+        let list = container.querySelector('.trigger-list');
+        if (!list) {
+            list = document.createElement('div');
+            list.className = 'trigger-list';
+            container.appendChild(list);
+        }
+        list.innerHTML = '';
+
+        activeEdgeIds.forEach(id => {
+            const edge = couplingGraph.edges.find(e => e.id === id);
+            if (edge) {
+                const span = document.createElement('span');
+                span.className = 'trigger-indicator';
+                span.textContent = `⚡ ${edge.id}`;
+                list.appendChild(span);
+            }
+        });
     }
 
     function renderAll() {
         const tNowMs = (video.currentTime || 0) * 1000;
         const valuesById = {};
         timelineData.forEach(d => {
-            // Mapping schema fields to coupling engine internal mapping
             valuesById[d.id] = { obj: d, series: d.value.series.map(p => ({ t: p.t_ms, v: p.v })) };
         });
 
-        // 1) Compute active triggers (Events)
         const activeEdgeIds = EventTriggerEngine.computeTriggersAtTime(valuesById, couplingGraph, tNowMs, triggerRuntime);
-
-        // 2) Apply coupling graph with event gating
         const viewValues = CouplingEngine.applyCouplingGraph(valuesById, couplingGraph, tNowMs, activeEdgeIds);
 
         renderTimelines(viewValues);
         renderAnalysisTags();
+        renderActiveTriggers(activeEdgeIds);
         renderManagementList();
-        drawGraph(selectedMetric, tNowMs);
+        drawGraph(selectedMetric, tNowMs, activeEdgeIds);
     }
 
     // Modal & Video handlers
@@ -175,19 +215,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const newMetric = {
             ...ValueValidator.createSkeleton(label.toLowerCase().replace(' ', '_'), label, 'user.defined'),
-            provenance: {
-                source_type: typeStr === 'Raw' ? 'observed' : 'derived',
-                method: 'user_defined_initialization'
-            },
-            value: {
-                kind: "scalar",
-                current: initVal,
-                series: []
-            }
+            provenance: { source_type: typeStr === 'Raw' ? 'observed' : 'derived', method: 'user_defined' },
+            value: { kind: "scalar", current: initVal, series: [] }
         };
-        for (let i = 0; i <= 200; i++) {
-            newMetric.value.series.push({ t_ms: Math.floor((i / 200) * durationMs), v: 10 + Math.random() * 80 });
-        }
+        for (let i = 0; i <= 200; i++) newMetric.value.series.push({ t_ms: Math.floor((i / 200) * durationMs), v: 10 + Math.random() * 80 });
 
         if (ValueValidator.validate(newMetric).valid) {
             timelineData.push(newMetric);

@@ -7,6 +7,10 @@ class TriggerRuntime {
     constructor() {
         this.lastSampleByValueId = new Map();
         this.activeUntilByEdgeId = new Map();
+
+        // ✅ NEW: event fire history (audit-friendly)
+        this.fired = []; // [{edgeId, tMs}]
+        this.maxFired = 2000;
     }
 
     getLast(valueId) { return this.lastSampleByValueId.get(valueId) || null; }
@@ -15,6 +19,21 @@ class TriggerRuntime {
     isHeld(edgeId, tNowMs) {
         const until = this.activeUntilByEdgeId.get(edgeId);
         return typeof until === "number" && tNowMs <= until;
+    }
+
+    // ✅ NEW: record event fire time
+    logFire(edgeId, tMs) {
+        this.fired.push({ edgeId, tMs });
+        if (this.fired.length > this.maxFired) {
+            this.fired.splice(0, this.fired.length - this.maxFired);
+        }
+    }
+
+    // ✅ NEW: reset runtime state (used on seek/rewind)
+    reset() {
+        this.lastSampleByValueId.clear();
+        this.activeUntilByEdgeId.clear();
+        this.fired.length = 0;
     }
 }
 
@@ -73,7 +92,7 @@ const EventTriggerEngine = {
                 const scene = trig.scene;
                 if (scene && scene.mode === "timeline_marks") {
                     const marks = scene.marks_ms || [];
-                    const eps = 30; // ms as requested in weiteres.md
+                    const eps = 30;
                     for (const m of marks) {
                         if (Math.abs(tNowMs - m) <= eps) { fired = true; break; }
                     }
@@ -85,6 +104,8 @@ const EventTriggerEngine = {
         runtime.setLast(edge.from, { t: tNowMs, v: vNow });
 
         if (fired) {
+            // ✅ Log Fire
+            runtime.logFire(edge.id, tNowMs);
             const hold = typeof trig.hold_ms === "number" ? trig.hold_ms : 0;
             if (hold > 0) runtime.setHold(edge.id, tNowMs + hold);
             return true;

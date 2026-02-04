@@ -528,7 +528,13 @@ body {
     stroke: var(--accent-color);
     stroke-width: 1.5px;
     stroke-dasharray: 4 2;
-    opacity: 0.8;
+    opacity: 0.6;
+}
+
+.event-marker-active {
+    stroke-width: 2.5px;
+    stroke-dasharray: 0;
+    opacity: 1;
 }
 
 .trigger-list {

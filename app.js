@@ -15,16 +15,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Runtime state
     const triggerRuntime = new TriggerRuntime();
     let couplingGraph = { meta: {}, nodes: [], edges: [] };
+    let lastRenderTimeMs = 0;
 
     try {
         const response = await fetch('coupling-graph.json');
         couplingGraph = await response.json();
+
+        // ✅ Contract Enforcement: validate graph before first frame
+        let res = CouplingValidator.validate(couplingGraph);
+        if (!res.ok) {
+            console.warn("CouplingGraph invalid, trying sample fallback", res.errors);
+            const fallback = await fetch('coupling-graph.sample.json').then(r => r.json());
+            const res2 = CouplingValidator.validate(fallback);
+            couplingGraph = res2.ok ? fallback : { meta: { id: "hard-fallback" }, nodes: [], edges: [] };
+            if (!res2.ok) console.warn("Sample fallback invalid too", res2.errors);
+        }
     } catch (e) {
-        console.warn("Graph load failed, using fallback", e);
-        couplingGraph = { meta: { id: "fallback" }, nodes: [], edges: [] };
+        console.warn("Graph load failed, using hard fallback", e);
+        couplingGraph = { meta: { id: "hard-fallback" }, nodes: [], edges: [] };
     }
 
-    // Config for timelines - Normalized to Wert-Schema v1
+    // ✅ Deterministic PRNG (reproducible across sessions)
+    function hashStringToSeed(str) {
+        let h = 2166136261;
+        for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+        return h >>> 0;
+    }
+    function mulberry32(seed) {
+        return function () {
+            let t = seed += 0x6D2B79F5;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+    function slugifyId(label) {
+        return label.toLowerCase().trim().replace(/\s+/g, "_").replace(/[^a-z0-9_.-]/g, "").slice(0, 64);
+    }
+
+    // Config for timelines
     let timelineData = [
         {
             ...ValueValidator.createSkeleton('delta_resonance', 'Delta Resonance', 'perception.core'),
@@ -70,11 +99,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     let selectedMetric = timelineData[0].label;
     const durationMs = 195000;
 
-    // Seed history matching the contract value.series
+    // Seed history deterministically
     timelineData.forEach(d => {
+        const rnd = mulberry32(hashStringToSeed(d.id));
         for (let i = 0; i <= 200; i++) {
             const t = (i / 200) * durationMs;
-            const v = 30 + Math.sin(i * 0.1) * 20 + (Math.random() * 10);
+            const noise = rnd() * 10;
+            const v = 30 + Math.sin(i * 0.1) * 20 + noise;
             d.value.series.push({ t_ms: Math.floor(t), v: v });
         }
     });
@@ -134,7 +165,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const metric = timelineData.find(m => m.label === label);
         if (!metric) return;
 
-        // Clear previous event markers
         const existingMarkers = document.querySelectorAll('.event-marker');
         existingMarkers.forEach(m => m.remove());
 
@@ -148,16 +178,34 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             graphPath.setAttribute('d', `M ${pathData.join(' L ')}`);
 
-            // Draw Event Markers
-            couplingGraph.edges.forEach(edge => {
-                if ((edge.from === metric.id || edge.to === metric.id) && activeEdgeIds.has(edge.id)) {
-                    const xTrigger = (tNowMs / durationMs) * 100;
+            // ✅ Draw historical event markers at the real fire time (audit-friendly)
+            triggerRuntime.fired
+                .filter(ev => ev.tMs <= tNowMs)
+                .forEach(ev => {
+                    const edge = couplingGraph.edges.find(e => e.id === ev.edgeId);
+                    if (!edge) return;
+                    if (edge.from !== metric.id && edge.to !== metric.id) return;
+
+                    const x = (ev.tMs / durationMs) * 100;
                     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                    line.setAttribute("x1", xTrigger);
+                    line.setAttribute("x1", x);
                     line.setAttribute("y1", "0");
-                    line.setAttribute("x2", xTrigger);
+                    line.setAttribute("x2", x);
                     line.setAttribute("y2", "100");
                     line.setAttribute("class", "event-marker");
+                    document.getElementById('analysis-graph').appendChild(line);
+                });
+
+            // ✅ Draw "active now" marker (visual feedback)
+            couplingGraph.edges.forEach(edge => {
+                if ((edge.from === metric.id || edge.to === metric.id) && activeEdgeIds.has(edge.id)) {
+                    const xNow = (tNowMs / durationMs) * 100;
+                    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    line.setAttribute("x1", xNow);
+                    line.setAttribute("y1", "0");
+                    line.setAttribute("x2", xNow);
+                    line.setAttribute("y2", "100");
+                    line.setAttribute("class", "event-marker event-marker-active");
                     document.getElementById('analysis-graph').appendChild(line);
                 }
             });
@@ -173,7 +221,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             container.appendChild(list);
         }
         list.innerHTML = '';
-
         activeEdgeIds.forEach(id => {
             const edge = couplingGraph.edges.find(e => e.id === id);
             if (edge) {
@@ -187,6 +234,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderAll() {
         const tNowMs = (video.currentTime || 0) * 1000;
+
+        // ✅ If user seeks backwards, reset runtime so events don't "stick from the future"
+        if (tNowMs + 250 < lastRenderTimeMs) {
+            triggerRuntime.reset();
+        }
+        lastRenderTimeMs = tNowMs;
+
         const valuesById = {};
         timelineData.forEach(d => {
             valuesById[d.id] = { obj: d, series: d.value.series.map(p => ({ t: p.t_ms, v: p.v })) };
@@ -212,13 +266,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const label = document.getElementById('metric-label').value;
         const typeStr = document.getElementById('metric-type').value;
         const initVal = parseInt(document.getElementById('metric-init-value').value);
+        const id = slugifyId(label);
 
         const newMetric = {
-            ...ValueValidator.createSkeleton(label.toLowerCase().replace(' ', '_'), label, 'user.defined'),
+            ...ValueValidator.createSkeleton(id, label, 'user.defined'),
             provenance: { source_type: typeStr === 'Raw' ? 'observed' : 'derived', method: 'user_defined' },
             value: { kind: "scalar", current: initVal, series: [] }
         };
-        for (let i = 0; i <= 200; i++) newMetric.value.series.push({ t_ms: Math.floor((i / 200) * durationMs), v: 10 + Math.random() * 80 });
+        const rnd = mulberry32(hashStringToSeed(id));
+        for (let i = 0; i <= 200; i++) newMetric.value.series.push({ t_ms: Math.floor((i / 200) * durationMs), v: 10 + rnd() * 80 });
 
         if (ValueValidator.validate(newMetric).valid) {
             timelineData.push(newMetric);

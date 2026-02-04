@@ -36,65 +36,84 @@ const CouplingEngine = {
     },
 
     /**
-     * ✅ Causal Breakdown v1.1 Normalizer
-     * Ensures old/partial forensic data matches the v1.1 spec.
+     * ✅ Causal Breakdown v1.1 Normalizer (Compat-Gateway)
+     * Upgrades legacy/partial forensic data to the strict v1.1 Spec.
      */
     normalizeBreakdown(breakdown) {
         const tNow = typeof breakdown?.t === "number" ? breakdown.t : null;
+
         const DEFAULT_SEVERITY = {
             MAX_SKEW_EXCEEDED: "warn",
-            SOURCE_MISSING: "warn",
-            VALIDATION_ERROR: "error",
+            NEGATIVE_TIME_JUMP_SEEK: "info",
+            MISSING_SOURCE_METRIC: "warn",
+            VALIDATION_REJECTED: "error",
+            MODE_KIND_MISMATCH: "error",
             SUPPRESSED_BY_REPLACE: "info",
-            OUT_OF_WINDOW: "info",
-            UNKNOWN: "warn",
+            UNKNOWN: "warn"
         };
 
         function mapReason(raw) {
-            const s = String(raw || "").toLowerCase();
-            if (s.includes("skew")) return "MAX_SKEW_EXCEEDED";
-            if (s.includes("replace") || s.includes("suppress")) return "SUPPRESSED_BY_REPLACE";
-            if (s.includes("schema") || s.includes("validation")) return "VALIDATION_ERROR";
-            if (s.includes("missing") || s.includes("nan")) return "SOURCE_MISSING";
-            if (s.includes("window") || s.includes("hold")) return "OUT_OF_WINDOW";
+            const s = String(raw || "").toUpperCase();
+            if (s.includes("SKEW")) return "MAX_SKEW_EXCEEDED";
+            if (s.includes("REPLACE") || s.includes("SUPPRESS")) return "SUPPRESSED_BY_REPLACE";
+            if (s.includes("VALIDATION") || s.includes("SCHEMA")) return "VALIDATION_REJECTED";
+            if (s.includes("MISSING") || s.includes("NAN")) return "MISSING_SOURCE_METRIC";
+            if (s.includes("WINDOW") || s.includes("HOLD")) return "OUTSIDE_HOLD_WINDOW";
+            if (s.includes("SEEK") || s.includes("JUMP")) return "NEGATIVE_TIME_JUMP_SEEK";
             return "UNKNOWN";
-        }
-
-        function inferLayer(item) {
-            if (item?.layer === "replace" || item?.layer === "blend") return item.layer;
-            if (item?.impact?.mode === "replace") return "replace";
-            if (mapReason(item?.reason) === "SUPPRESSED_BY_REPLACE") return "blend";
-            return "blend";
         }
 
         const blocked = Array.isArray(breakdown?.blocked) ? breakdown.blocked : [];
         const normalized = blocked.map((item) => {
+            // Handle legacy string items
+            if (typeof item === 'string') {
+                const parts = item.split(':');
+                return {
+                    edge_id: parts[0]?.trim() || "unknown",
+                    reason: "UNKNOWN",
+                    severity: "info",
+                    ts_ms: tNow,
+                    message: item
+                };
+            }
+
             const reason = mapReason(item?.reason);
             const severity = item?.severity || DEFAULT_SEVERITY[reason] || "warn";
-            const layer = inferLayer(item);
+
             return {
                 edge_id: String(item?.edge_id ?? "unknown"),
-                layer,
-                reason,
-                severity,
-                t_trigger: item?.t_trigger ?? null,
-                t_effective: item?.t_effective ?? null,
-                skew_ms: item?.skew_ms ?? null,
-                max_skew_ms: item?.max_skew_ms ?? null,
-                gate_source: item?.gate_source ?? "unknown",
-                window: {
-                    start: item?.window?.start ?? null,
-                    end: item?.window?.end ?? null,
-                    now: item?.window?.now ?? tNow
-                },
-                impact: item?.impact ?? (item?.edge_id ? { mode: layer, kind: null, gain: null, weight: null } : null),
-                src: item?.src ?? null,
-                preview: item?.preview ?? null,
-                note: item?.note ?? ""
+                target_id: item?.target_id || item?.to || null,
+                src_id: item?.src_id || null,
+                reason: reason,
+                severity: severity,
+                ts_ms: item.ts_ms ?? tNow,
+                fired_at_ms: item.fired_at_ms ?? item.t_trigger ?? null,
+                effect_at_ms: item.effect_at_ms ?? item.t_effective ?? null,
+                delay_ms: item.delay_ms ?? ((item.t_effective && item.t_trigger) ? (item.t_effective - item.t_trigger) : null),
+                max_skew_ms: item.max_skew_ms ?? null,
+                skew_ms: item.skew_ms ?? (item.skew_ms === undefined ? null : item.skew_ms),
+                gate_source: item.gate_source ?? "unknown",
+                message: item.message || (item.note ?? ""),
+                window: item.window ? {
+                    start: item.window.start ?? null,
+                    end: item.window.end ?? null,
+                    now: item.window.now ?? tNow
+                } : null,
+                preview: item.preview ? {
+                    mode: item.preview.mode ?? (item.layer || null),
+                    kind: item.preview.kind ?? (item.impact?.kind || null),
+                    priority: item.preview.priority ?? null,
+                    weight: item.preview.weight ?? (item.impact?.weight || null),
+                    gain: item.preview.gain ?? (item.impact?.gain || null),
+                    src: item.preview.src ?? (item.src?.value || null),
+                    would_add: item.preview.would_add ?? null,
+                    would_factor: item.preview.would_factor ?? null
+                } : null
             };
         });
 
         const result = { ...breakdown, blocked: normalized };
+        if (!result.breakdown_version) result.breakdown_version = "1.1";
         if (!result.schema_version) result.schema_version = "causal_breakdown_v1.1";
         return result;
     },
@@ -149,29 +168,28 @@ const CouplingEngine = {
                             });
                         } else {
                             blockedImpacts.push({
-                                to: edge.to,
                                 edge_id: edge.id,
-                                layer: layer,
+                                target_id: edge.to,
+                                src_id: edge.from,
                                 reason: "MAX_SKEW_EXCEEDED",
                                 severity: "warn",
-                                t_trigger: ev.tMs,
-                                t_effective: tEffective,
-                                skew_ms: skew,
+                                ts_ms: tNowMs,
+                                fired_at_ms: ev.tMs,
+                                effect_at_ms: tEffective,
+                                delay_ms: delay,
                                 max_skew_ms: maxSkew,
-                                gate_source: edge.gate?.max_skew_ms ? "edge.gate" : (edge.alignment?.max_skew_ms ? "edge.alignment" : "defaults"),
+                                skew_ms: skew,
+                                gate_source: edge.gate?.max_skew_ms ? "edge" : (edge.alignment?.max_skew_ms ? "alignment" : "defaults"),
+                                message: `Skew ${Math.round(skew)}ms exceeds limit ${maxSkew}ms.`,
                                 window: { start: tEffective, end: tEnd, now: tNowMs },
-                                impact: {
+                                preview: {
                                     mode: layer,
                                     kind: edge.impact?.function || "add",
                                     gain: edge.impact?.gain ?? 1.0,
-                                    weight: edge.impact?.weight ?? 1.0
-                                },
-                                src: { metric_id: edge.from, value: nakedImpact / (edge.impact?.gain || 1.0) },
-                                preview: {
-                                    would_apply: true,
+                                    weight: edge.impact?.weight ?? 1.0,
+                                    src: nakedImpact / (edge.impact?.gain || 1.0),
                                     would_add: (layer === "blend" && (edge.impact?.function === "add" || !edge.impact?.function)) ? nakedImpact : null,
-                                    would_factor: (layer === "blend" && edge.impact?.function === "mul") ? (1 + nakedImpact) : null,
-                                    would_value: (layer === "replace" && edge.impact?.function === "set") ? nakedImpact : null
+                                    would_factor: (layer === "blend" && edge.impact?.function === "mul") ? (1 + nakedImpact) : null
                                 }
                             });
                         }
@@ -204,7 +222,7 @@ const CouplingEngine = {
         const targetNodes = new Set((graph.nodes || []).map(n => n.value_id));
         targetNodes.forEach(toId => {
             const impacts = activeImpacts.filter(i => i.to === toId);
-            const blocked = blockedImpacts.filter(i => i.to === toId);
+            const blocked = blockedImpacts.filter(i => i.target_id === toId);
             const targetObj = valuesById[toId]?.obj;
             const baseValue = targetObj?.value.current || 0;
             const range = targetObj?.semantics?.range || { min: 0, max: 100 };
@@ -263,17 +281,14 @@ const CouplingEngine = {
                 impacts.filter(i => i.mode === "blend").forEach(bi => {
                     rawBreakdown.blocked.push({
                         edge_id: bi.id,
-                        layer: "blend",
+                        target_id: toId,
                         reason: "SUPPRESSED_BY_REPLACE",
                         severity: "info",
-                        t_trigger: bi.tTrigger,
-                        t_effective: bi.tEffective,
-                        skew_ms: bi.skew,
-                        max_skew_ms: null,
-                        gate_source: "logic",
-                        window: { start: bi.tEffective, end: bi.tEnd, now: tNowMs },
-                        impact: { mode: "blend", kind: bi.kind, gain: null, weight: bi.weight },
-                        preview: { would_apply: true, would_add: bi.kind === "add" ? bi.value : null, would_factor: bi.kind === "mul" ? (1 + bi.value) : null }
+                        ts_ms: tNowMs,
+                        fired_at_ms: bi.tTrigger,
+                        effect_at_ms: bi.tEffective,
+                        message: `Blend suppressed because replace winner ${winner.id} is active.`,
+                        preview: { mode: "blend", kind: bi.kind, weight: bi.weight, candidate: bi.value }
                     });
                 });
             } else {

@@ -18,7 +18,8 @@ const CausalForensicsTest = {
             this.testMissingNumbersToNull(),
             this.testWindowBackfill(),
             this.testUnknownReason(),
-            this.testSchemaVersionInjection()
+            this.testSchemaVersionInjection(),
+            this.testLegacyStringNormalization()
         ];
 
         const passed = results.filter(r => r === true).length;
@@ -43,8 +44,7 @@ const CausalForensicsTest = {
         return this.assert("Legacy Reason String (Skew)",
             item.reason === "MAX_SKEW_EXCEEDED" &&
             item.severity === "warn" &&
-            item.layer === "blend" &&
-            item.window.now === 1000
+            item.ts_ms === 1000
         );
     },
 
@@ -54,8 +54,7 @@ const CausalForensicsTest = {
         const item = out.blocked[0];
         return this.assert("Suppressed by Replace",
             item.reason === "SUPPRESSED_BY_REPLACE" &&
-            item.severity === "info" &&
-            item.layer === "blend"
+            item.severity === "info"
         );
     },
 
@@ -64,7 +63,7 @@ const CausalForensicsTest = {
         const out = CouplingEngine.normalizeBreakdown(input);
         const item = out.blocked[0];
         return this.assert("Validation Error mapping",
-            item.reason === "VALIDATION_ERROR" &&
+            item.reason === "VALIDATION_REJECTED" &&
             item.severity === "error"
         );
     },
@@ -74,17 +73,17 @@ const CausalForensicsTest = {
         const out = CouplingEngine.normalizeBreakdown(input);
         const item = out.blocked[0];
         return this.assert("Explicit Replace Layer inference",
-            item.layer === "replace" &&
+            item.preview.mode === "replace" &&
             item.reason === "MAX_SKEW_EXCEEDED"
         );
     },
 
     testGateSourcePreservation() {
-        const input = { t: 5000, blocked: [{ edge_id: "e5", reason: "skew", gate_source: "edge.gate", max_skew_ms: 250, skew_ms: 480 }] };
+        const input = { t: 5000, blocked: [{ edge_id: "e5", reason: "skew", gate_source: "edge", max_skew_ms: 250, skew_ms: 480 }] };
         const out = CouplingEngine.normalizeBreakdown(input);
         const item = out.blocked[0];
         return this.assert("Gate Source Preservation",
-            item.gate_source === "edge.gate" &&
+            item.gate_source === "edge" &&
             item.max_skew_ms === 250 &&
             item.skew_ms === 480
         );
@@ -105,7 +104,7 @@ const CausalForensicsTest = {
         const out = CouplingEngine.normalizeBreakdown(input);
         const item = out.blocked[0];
         return this.assert("Missing Numbers -> null",
-            item.t_trigger === null &&
+            item.fired_at_ms === null &&
             item.skew_ms === null
         );
     },
@@ -134,8 +133,19 @@ const CausalForensicsTest = {
         const input = { t: 10000, blocked: [] };
         const out = CouplingEngine.normalizeBreakdown(input);
         return this.assert("Schema Version Injection",
-            out.schema_version === "causal_breakdown_v1.1" &&
+            out.breakdown_version === "1.1" &&
             Array.isArray(out.blocked)
+        );
+    },
+
+    testLegacyStringNormalization() {
+        const input = { t: 11000, blocked: ["e10: manual rejection"] };
+        const out = CouplingEngine.normalizeBreakdown(input);
+        const item = out.blocked[0];
+        return this.assert("Legacy String Normalization",
+            item.edge_id === "e10" &&
+            item.message === "e10: manual rejection" &&
+            item.severity === "info"
         );
     }
 };

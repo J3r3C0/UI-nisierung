@@ -1,0 +1,493 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://sheratan.local/schemas/causal_breakdown_v1.1.json",
+    "title": "Causal Breakdown Payload v1.1",
+    "type": "object",
+    "additionalProperties": true,
+    "required": [
+        "t",
+        "target",
+        "base",
+        "final"
+    ],
+    "properties": {
+        "breakdown_version": {
+            "type": "string",
+            "description": "Semantic version of the breakdown payload.",
+            "default": "1.1",
+            "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "t": {
+            "type": "number",
+            "description": "Current evaluation timestamp (ms)."
+        },
+        "target": {
+            "type": "string",
+            "description": "Target metric id."
+        },
+        "base": {
+            "type": "number",
+            "description": "Deterministic base value at time t."
+        },
+        "after_replace": {
+            "type": [
+                "number",
+                "null"
+            ],
+            "description": "Value after replace winner (null if none)."
+        },
+        "after_blend": {
+            "type": [
+                "number",
+                "null"
+            ],
+            "description": "Value after blend (null if suppressed or not computed)."
+        },
+        "clamp": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "description": "Clamp range if enabled.",
+            "additionalProperties": false,
+            "properties": {
+                "min": {
+                    "type": "number"
+                },
+                "max": {
+                    "type": "number"
+                }
+            },
+            "required": [
+                "min",
+                "max"
+            ]
+        },
+        "final": {
+            "type": "number",
+            "description": "Rendered final value."
+        },
+        "replace": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+                "active",
+                "candidates"
+            ],
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "winner": {
+                    "type": [
+                        "object",
+                        "null"
+                    ],
+                    "additionalProperties": true,
+                    "required": [
+                        "edge_id",
+                        "priority",
+                        "t_trigger",
+                        "t_effective",
+                        "skew_ms",
+                        "hold_start",
+                        "hold_end"
+                    ],
+                    "properties": {
+                        "edge_id": {
+                            "type": "string"
+                        },
+                        "priority": {
+                            "type": "number"
+                        },
+                        "t_trigger": {
+                            "type": "number"
+                        },
+                        "t_effective": {
+                            "type": "number"
+                        },
+                        "skew_ms": {
+                            "type": "number"
+                        },
+                        "hold_start": {
+                            "type": "number"
+                        },
+                        "hold_end": {
+                            "type": "number"
+                        }
+                    }
+                },
+                "candidates": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/replaceCandidate"
+                    }
+                }
+            }
+        },
+        "blend": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+                "enabled",
+                "suppressed_by_replace",
+                "normalize_weights",
+                "delta_add",
+                "delta_mul",
+                "add_terms",
+                "mul_terms"
+            ],
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "suppressed_by_replace": {
+                    "type": "boolean"
+                },
+                "normalize_weights": {
+                    "type": "boolean"
+                },
+                "delta_add": {
+                    "type": "number"
+                },
+                "delta_mul": {
+                    "type": "number"
+                },
+                "add_terms": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/blendAddTerm"
+                    }
+                },
+                "mul_terms": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/blendMulTerm"
+                    }
+                }
+            }
+        },
+        "blocked": {
+            "type": "array",
+            "description": "Impacts rejected by gating/validation/suppression. UI must tolerate partial legacy entries via normalizeBreakdown().",
+            "items": {
+                "$ref": "#/$defs/blockedImpact"
+            },
+            "default": []
+        }
+    },
+    "$defs": {
+        "gateSource": {
+            "type": "string",
+            "enum": [
+                "edge",
+                "alignment",
+                "defaults",
+                "unknown"
+            ]
+        },
+        "blockSeverity": {
+            "type": "string",
+            "enum": [
+                "info",
+                "warn",
+                "error"
+            ]
+        },
+        "blockReason": {
+            "type": "string",
+            "enum": [
+                "MAX_SKEW_EXCEEDED",
+                "NEGATIVE_TIME_JUMP_SEEK",
+                "OUTSIDE_HOLD_WINDOW",
+                "MISSING_SOURCE_METRIC",
+                "MISSING_TARGET_METRIC",
+                "VALIDATION_REJECTED",
+                "MODE_KIND_MISMATCH",
+                "INVALID_EDGE_CONFIG",
+                "INTERNAL_GUARD",
+                "UNKNOWN"
+            ]
+        },
+        "replaceCandidate": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+                "edge_id",
+                "priority",
+                "t_trigger",
+                "t_effective",
+                "skew_ms",
+                "passes_gate"
+            ],
+            "properties": {
+                "edge_id": {
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "number"
+                },
+                "t_trigger": {
+                    "type": "number"
+                },
+                "t_effective": {
+                    "type": "number"
+                },
+                "skew_ms": {
+                    "type": "number"
+                },
+                "passes_gate": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "blendAddTerm": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+                "edge_id",
+                "src",
+                "gain",
+                "weight",
+                "contribution"
+            ],
+            "properties": {
+                "edge_id": {
+                    "type": "string"
+                },
+                "src": {
+                    "type": "number"
+                },
+                "gain": {
+                    "type": "number"
+                },
+                "weight": {
+                    "type": "number"
+                },
+                "contribution": {
+                    "type": "number"
+                }
+            }
+        },
+        "blendMulTerm": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+                "edge_id",
+                "src",
+                "gain",
+                "weight",
+                "factor"
+            ],
+            "properties": {
+                "edge_id": {
+                    "type": "string"
+                },
+                "src": {
+                    "type": "number"
+                },
+                "gain": {
+                    "type": "number"
+                },
+                "weight": {
+                    "type": "number"
+                },
+                "factor": {
+                    "type": "number"
+                }
+            }
+        },
+        "blockedImpact": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": [
+                "edge_id",
+                "reason",
+                "severity",
+                "ts_ms"
+            ],
+            "properties": {
+                "edge_id": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "target_id": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "src_id": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "reason": {
+                    "$ref": "#/$defs/blockReason"
+                },
+                "severity": {
+                    "$ref": "#/$defs/blockSeverity"
+                },
+                "ts_ms": {
+                    "type": "number",
+                    "description": "Evaluation timestamp (ms) when this block was recorded."
+                },
+                "fired_at_ms": {
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "effect_at_ms": {
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "delay_ms": {
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "max_skew_ms": {
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "skew_ms": {
+                    "type": [
+                        "number",
+                        "null"
+                    ]
+                },
+                "gate_source": {
+                    "$ref": "#/$defs/gateSource"
+                },
+                "alignment_id": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "message": {
+                    "type": "string"
+                },
+                "details": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "preview": {
+                    "type": [
+                        "object",
+                        "null"
+                    ],
+                    "additionalProperties": true,
+                    "properties": {
+                        "mode": {
+                            "type": [
+                                "string",
+                                "null"
+                            ],
+                            "enum": [
+                                "replace",
+                                "blend"
+                            ]
+                        },
+                        "kind": {
+                            "type": [
+                                "string",
+                                "null"
+                            ],
+                            "enum": [
+                                "add",
+                                "mul",
+                                "set"
+                            ]
+                        },
+                        "priority": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "weight": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "gain": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "base": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "src": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "candidate": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "delta_add": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "factor_mul": {
+                            "type": [
+                                "number",
+                                "null"
+                            ]
+                        },
+                        "clamp": {
+                            "type": [
+                                "object",
+                                "null"
+                            ],
+                            "additionalProperties": true,
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                },
+                                "min": {
+                                    "type": "number"
+                                },
+                                "max": {
+                                    "type": "number"
+                                }
+                            }
+                        },
+                        "normalize": {
+                            "type": [
+                                "object",
+                                "null"
+                            ],
+                            "additionalProperties": true,
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

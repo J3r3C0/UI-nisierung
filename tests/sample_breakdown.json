@@ -1,0 +1,16 @@
+{
+    "t": 42000,
+    "target": "delta_resonance",
+    "base": 75,
+    "final": 75.5,
+    "blocked": [
+        {
+            "edge_id": "e_sigma_blend",
+            "reason": "MAX_SKEW_EXCEEDED",
+            "severity": "warn",
+            "ts_ms": 42000,
+            "skew_ms": 1200,
+            "max_skew_ms": 1000
+        }
+    ]
+}

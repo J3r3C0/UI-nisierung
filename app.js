@@ -278,10 +278,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             
             ${filteredBlocked.map(b => `
                 <div class="forensic-card block-card" style="margin-bottom:8px; border-left: 2px solid ${b.severity === 'error' ? '#ff4444' : (b.severity === 'warn' ? '#ffaa00' : '#00f2ff')}">
-                    <div class="forensic-row"><span class="key">Edge</span><span class="val">${b.edge_id}</span></div>
-                    <div class="forensic-row"><span class="key">Reason</span><span class="val">${b.reason}</span></div>
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 8px;">
+                        <span class="term-edge" style="color: ${b.severity === 'error' ? '#ff4444' : '#fff'}">${b.edge_id}</span>
+                        <span class="badge" style="font-size:0.5rem">${b.reason}</span>
+                    </div>
+                    ${b.message ? `<div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:8px">${b.message}</div>` : ''}
+                    <div class="forensic-row"><span class="key">Severity</span><span class="val" style="color: ${b.severity === 'error' ? '#ff4444' : (b.severity === 'warn' ? '#ffaa00' : '#00f2ff')}">${b.severity.toUpperCase()}</span></div>
+                    
                     ${b.skew_ms !== null ? `<div class="forensic-row"><span class="key">Skew</span><span class="val">${fmtMs(b.skew_ms)} ms (max ${b.max_skew_ms})</span></div>` : ''}
-                    ${b.preview?.would_apply ? `<div class="forensic-row"><span class="key">Preview</span><span class="val" style="color:var(--text-secondary)">Would have modified by ${b.preview.would_add ? '+' + fmt(b.preview.would_add) : 'x' + fmt(b.preview.would_factor)}</span></div>` : ''}
+                    ${b.effect_at_ms !== null ? `<div class="forensic-row"><span class="key">Timing</span><span class="val">Trigger: ${fmtMs(b.fired_at_ms)} | Effect: ${fmtMs(b.effect_at_ms)}</span></div>` : ''}
+                    
+                    ${b.preview?.would_apply || b.preview?.candidate ? `
+                        <div class="forensic-row">
+                            <span class="key">Preview Impact</span>
+                            <span class="val" style="color:var(--text-secondary)">
+                                ${b.preview.would_add ? '+' + fmt(b.preview.would_add) : (b.preview.would_factor ? 'x' + fmt(b.preview.would_factor) : (b.preview.candidate ? 'val: ' + fmt(b.preview.candidate) : '—'))}
+                            </span>
+                        </div>` : ''}
                 </div>
             `).join('') || '<div style="font-size:0.7rem; color:var(--text-secondary)">No impacts match filter.</div>'}
 

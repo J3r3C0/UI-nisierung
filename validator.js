@@ -1,26 +1,25 @@
 /**
- * Sheratan Value Validator
- * Implements the normative contract defined in wert-schema.md
+ * Sheratan Value Validator v1
+ * Implements the normative contract from Wert-Schema v1
  */
 const ValueValidator = {
     validate(value) {
         const errors = [];
 
-        // Minimal required blocks check
-        const requiredBlocks = ['meta', 'semantics', 'provenance', 'generation', 'time'];
-        requiredBlocks.forEach(block => {
-            if (!value[block]) errors.push(`Missing Block: ${block}`);
+        // Required top-level fields
+        const requiredFields = ["id", "label", "semantics", "timeline", "provenance", "value"];
+        requiredFields.forEach(f => {
+            if (!value[f]) errors.push(`Missing field: ${f}`);
         });
 
         if (errors.length > 0) return { valid: false, errors };
 
-        // Semantic Check: Dimension vs Unit
-        if (value.semantics.unit === 'percent' && (value.semantics.scale.min !== 0 || value.semantics.scale.max !== 100)) {
-            errors.push("Semantic Error: Unit 'percent' requires scale 0-100.");
+        // Scale vs Unit sanity check
+        if (value.semantics.scale === "percent_0_100") {
+            if (value.semantics.range && (value.semantics.range.min !== 0 || value.semantics.range.max !== 100)) {
+                errors.push("Semantic Violation: percent_0_100 requires range 0-100");
+            }
         }
-
-        // Time Check: Validity vs Sampling
-        // (Simplified logic for now)
 
         return {
             valid: errors.length === 0,
@@ -28,16 +27,33 @@ const ValueValidator = {
         };
     },
 
-    // Utility to create a 'Standard compliant' skeleton
-    createSkeleton(id, label, namespace) {
+    createSkeleton(id, label, domain) {
         return {
-            meta: { id, label, namespace, version: "1.0" },
-            semantics: { dimension: "generic", unit: "unitless", scale: { type: "ratio", min: 0, max: 100 }, interpretation: { higher_is: "better" } },
-            provenance: { source_type: "telemetry", source_id: "system" },
-            generation: { transform: { type: "none" } },
-            modulation: {},
-            time: { sampling_rate: "1s" },
-            quality: { confidence: 1.0 }
+            id: id,
+            label: label,
+            semantics: {
+                domain: domain,
+                unit: "%",
+                scale: "percent_0_100",
+                range: { min: 0, max: 100 },
+                meaning: `Default skeleton for ${label}`
+            },
+            timeline: {
+                clock: "video_ms",
+                sample_ms: 33,
+                validity: { t0_ms: 0, t1_ms: 33 }
+            },
+            provenance: {
+                source_type: "manual",
+                method: "initialized_by_user"
+            },
+            modulation: { pipeline: [] },
+            quality: { confidence: 1.0, latency_ms: 0, stability: 1.0 },
+            value: {
+                kind: "scalar",
+                current: 50,
+                series: []
+            }
         };
     }
 };

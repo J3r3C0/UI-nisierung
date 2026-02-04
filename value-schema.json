@@ -1,91 +1,158 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Sheratan Value Schema v1",
+  "$id": "sheratan.value.schema.v1",
   "type": "object",
-  "required": ["meta", "semantics", "provenance", "generation", "time"],
+  "required": [
+    "id",
+    "label",
+    "semantics",
+    "timeline",
+    "provenance",
+    "value"
+  ],
   "properties": {
-    "meta": {
-      "type": "object",
-      "required": ["id", "label", "namespace"],
-      "properties": {
-        "id": { "type": "string" },
-        "label": { "type": "string" },
-        "version": { "type": "string", "default": "1.0" },
-        "namespace": { "type": "string" }
-      }
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_.-]{3,64}$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1
     },
     "semantics": {
       "type": "object",
-      "required": ["dimension", "unit"],
+      "required": [
+        "domain",
+        "scale"
+      ],
       "properties": {
-        "dimension": { "type": "string" },
-        "unit": { "type": "string" },
+        "domain": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
         "scale": {
+          "type": "string",
+          "enum": [
+            "ratio",
+            "interval",
+            "ordinal",
+            "nominal",
+            "percent_0_100"
+          ]
+        },
+        "range": {
           "type": "object",
           "properties": {
-            "type": { "enum": ["ratio", "interval", "ordinal", "nominal"] },
-            "min": { "type": "number" },
-            "max": { "type": "number" }
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            }
           }
         },
-        "interpretation": {
+        "meaning": {
+          "type": "string"
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "required": [
+        "clock",
+        "sample_ms",
+        "validity"
+      ],
+      "properties": {
+        "clock": {
+          "type": "string",
+          "enum": [
+            "video_ms",
+            "system_ms",
+            "logical_tick"
+          ]
+        },
+        "sample_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "validity": {
           "type": "object",
+          "required": [
+            "t0_ms",
+            "t1_ms"
+          ],
           "properties": {
-            "higher_is": { "enum": ["better", "worse", "neutral"] }
+            "t0_ms": {
+              "type": "integer"
+            },
+            "t1_ms": {
+              "type": "integer"
+            }
           }
         }
       }
     },
     "provenance": {
       "type": "object",
-      "required": ["source_type"],
+      "required": [
+        "source_type",
+        "method"
+      ],
       "properties": {
-        "source_type": { "enum": ["telemetry", "log", "human", "model", "synthetic"] },
-        "source_id": { "type": "string" },
-        "acquisition": {
-          "type": "object",
-          "properties": {
-            "method": { "type": "string" },
-            "endpoint": { "type": "string" }
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "observed",
+            "derived",
+            "manual",
+            "inferred"
+          ]
+        },
+        "source_ref": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
           }
-        }
-      }
-    },
-    "generation": {
-      "type": "object",
-      "required": ["transform"],
-      "properties": {
-        "raw_input": { "type": "string" },
-        "transform": {
-          "type": "object",
-          "required": ["type"],
-          "properties": {
-            "type": { "type": "string" },
-            "function": { "type": "string" },
-            "window": { "type": "string" }
-          }
+        },
+        "params": {
+          "type": "object"
         }
       }
     },
     "modulation": {
       "type": "object",
       "properties": {
-        "normalization": { "type": "object" },
-        "smoothing": { "type": "object" },
-        "weighting": { "type": "number" }
-      }
-    },
-    "time": {
-      "type": "object",
-      "required": ["sampling_rate"],
-      "properties": {
-        "sampling_rate": { "type": "string" },
-        "validity_duration": { "type": "string" },
-        "latency_model": {
-          "type": "object",
-          "properties": {
-            "type": { "enum": ["instant", "delayed", "windowed"] },
-            "expected_delay": { "type": "string" }
+        "pipeline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "normalize",
+                  "clamp",
+                  "ema",
+                  "sma",
+                  "baseline_subtract",
+                  "gain"
+                ]
+              },
+              "params": {
+                "type": "object"
+              }
+            }
           }
         }
       }
@@ -93,9 +160,61 @@
     "quality": {
       "type": "object",
       "properties": {
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "noise_level": { "enum": ["low", "medium", "high"] },
-        "last_validated": { "type": "string", "format": "date-time" }
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "value": {
+      "type": "object",
+      "required": [
+        "kind",
+        "current"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "scalar",
+            "event",
+            "state"
+          ]
+        },
+        "current": {
+          "type": "number"
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "t_ms",
+              "v"
+            ],
+            "properties": {
+              "t_ms": {
+                "type": "integer"
+              },
+              "v": {
+                "type": "number"
+              }
+            }
+          }
+        }
       }
     }
   }

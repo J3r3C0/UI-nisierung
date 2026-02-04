@@ -224,13 +224,4 @@ Das ist der Kern deiner ursprünglichen Intuition.
 
 ---
 
-## Nächster sinnvoller Schritt (du entscheidest)
 
-Wir können jetzt:
-
-1. 🔹 **2–3 konkrete Beispielwerte** definieren (System / Agent / Emotion)
-2. 🔹 Ein **Vergleichs-Schema** (wie zwei Werte überhaupt verglichen werden dürfen)
-3. 🔹 Ein **JSON-Schema / Validator** bauen
-4. 🔹 Oder direkt die **Kopplungslogik** (synchron / kausal)
-
-Sag mir **welcher Schritt als nächstes stabilisiert werden soll**.

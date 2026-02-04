@@ -325,10 +325,3 @@ Werte bleiben reine Mess-/Score-Definitionen; Beziehungen sind extern → sauber
 
 ---
 
-Wenn du willst, kann ich als nächstes (ohne weitere Fragen) noch liefern:
-
-1. `coupling-validator.js` (analog zu deinem `validator.js`, nur für Couplings)
-2. `event`-Edges: Trigger-Detektor (Spike, threshold crossing, scene boundary)
-3. `causal offset calibration`: einfache Auto-Schätzung von Δ per Cross-Correlation (optional)
-
-Sag einfach **1, 2 oder 3**.

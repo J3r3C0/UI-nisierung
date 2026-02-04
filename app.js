@@ -21,42 +21,58 @@ document.addEventListener('DOMContentLoaded', async () => {
         couplingGraph = await response.json();
     } catch (e) { console.warn("Graph load failed", e); }
 
+    // Config for timelines - Normalized to Wert-Schema v1 (Step 135)
     let timelineData = [
         {
             ...ValueValidator.createSkeleton('delta_resonance', 'Delta Resonance', 'perception.core'),
-            semantics: { dimension: 'resonance', unit: 'percent', scale: { min: 0, max: 100 }, interpretation: { higher_is: 'better' } },
-            provenance: { source_type: 'model', source_id: 'soul_engine_v1.2' },
-            quality: { confidence: 0.98 },
-            value: 75,
-            history: []
+            semantics: {
+                domain: "perception.core",
+                unit: "%",
+                scale: "percent_0_100",
+                range: { min: 0, max: 100 },
+                meaning: "Resonanz zwischen Input-Signal und Core-State"
+            },
+            provenance: {
+                source_type: "derived",
+                source_ref: "soul_engine_v1.2",
+                method: "cosine_similarity(windowed_features, core_vector)",
+                inputs: ["frame_features", "core_vector"],
+                params: { window_ms: 300 }
+            },
+            quality: { confidence: 0.98, latency_ms: 12, stability: 0.64 },
+            value: { kind: "scalar", current: 75, series: [] }
         },
         {
             ...ValueValidator.createSkeleton('sigma_movement', 'Sigma Movement', 'perception.spatial'),
-            semantics: { dimension: 'velocity', unit: 'ratio', scale: { min: 0, max: 1 }, interpretation: { higher_is: 'neutral' } },
-            provenance: { source_type: 'telemetry', source_id: 'camera_front_tracking' },
-            quality: { confidence: 0.85 },
-            value: 45,
-            history: []
+            provenance: {
+                source_type: "observed",
+                source_ref: "camera_front_tracking",
+                method: "optical_flow_magnitude"
+            },
+            quality: { confidence: 0.85, latency_ms: 0, stability: 0.9 },
+            value: { kind: "scalar", current: 45, series: [] }
         },
         {
             ...ValueValidator.createSkeleton('theta_intent', 'Theta Intent', 'perception.agent'),
-            semantics: { dimension: 'intention', unit: 'percent', scale: { min: 0, max: 100 }, interpretation: { higher_is: 'better' } },
-            provenance: { source_type: 'model', source_id: 'intent_core_v4' },
-            quality: { confidence: 0.92 },
-            value: 90,
-            history: []
+            provenance: {
+                source_type: "inferred",
+                source_ref: "intent_core_v4",
+                method: "probabilistic_sequence_modeling"
+            },
+            quality: { confidence: 0.92, latency_ms: 45, stability: 0.8 },
+            value: { kind: "scalar", current: 90, series: [] }
         }
     ];
 
-    let selectedMetric = timelineData[0].meta.label;
+    let selectedMetric = timelineData[0].label;
     const durationMs = 195000;
 
-    // Seed history
+    // Seed history matching the contract value.series
     timelineData.forEach(d => {
         for (let i = 0; i <= 200; i++) {
             const t = (i / 200) * durationMs;
             const v = 30 + Math.sin(i * 0.1) * 20 + (Math.random() * 10);
-            d.history.push({ t, v });
+            d.value.series.push({ t_ms: Math.floor(t), v: v });
         }
     });
 
@@ -64,12 +80,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const timelinesContainer = document.getElementById('timelines');
         timelinesContainer.innerHTML = '';
         timelineData.forEach((data) => {
-            const val = viewValues[data.meta.id] ?? data.value;
+            const val = viewValues[data.id] ?? data.value.current;
             const item = document.createElement('div');
-            item.className = 'timeline-item' + (data.meta.label === selectedMetric ? ' active' : '');
-            item.onclick = () => { selectedMetric = data.meta.label; renderAll(); };
+            item.className = 'timeline-item' + (data.label === selectedMetric ? ' active' : '');
+            item.onclick = () => { selectedMetric = data.label; renderAll(); };
             item.innerHTML = `
-                <span class="timeline-label">${data.meta.label}</span>
+                <span class="timeline-label">${data.label}</span>
                 <div class="timeline-value-container">
                     <div class="timeline-bar" style="height: ${val}%"></div>
                 </div>
@@ -92,8 +108,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             item.className = 'metric-config-item';
             item.innerHTML = `
                 <div class="metric-info">
-                    <span class="metric-name">${data.meta.label}</span>
-                    <span class="metric-type">${data.provenance.source_type} | ${data.semantics.dimension}</span>
+                    <span class="metric-name">${data.label}</span>
+                    <span class="metric-type">${data.provenance.source_type} | ${data.semantics.domain}</span>
                 </div>
                 <div class="metric-actions">
                     <button class="action-btn" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
@@ -105,20 +121,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     window.deleteMetric = (index) => {
-        const deletedLabel = timelineData[index].meta.label;
+        const deletedLabel = timelineData[index].label;
         timelineData.splice(index, 1);
-        if (selectedMetric === deletedLabel && timelineData.length > 0) selectedMetric = timelineData[0].meta.label;
+        if (selectedMetric === deletedLabel && timelineData.length > 0) selectedMetric = timelineData[0].label;
         renderAll();
     };
 
     function drawGraph(label, tNowMs) {
-        const metric = timelineData.find(m => m.meta.label === label);
+        const metric = timelineData.find(m => m.label === label);
         if (!metric) return;
-        const visibleSeries = metric.history.filter(p => p.t <= tNowMs);
+        const visibleSeries = metric.value.series.filter(p => p.t_ms <= tNowMs);
         let pathData = [];
         if (visibleSeries.length > 0) {
             visibleSeries.forEach((p) => {
-                const x = (p.t / durationMs) * 100;
+                const x = (p.t_ms / durationMs) * 100;
                 const y = 100 - p.v;
                 pathData.push(`${x},${y}`);
             });
@@ -129,7 +145,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     function renderAll() {
         const tNowMs = (video.currentTime || 0) * 1000;
         const valuesById = {};
-        timelineData.forEach(d => { valuesById[d.meta.id] = { obj: d, series: d.history }; });
+        timelineData.forEach(d => {
+            // Mapping schema fields to coupling engine internal mapping
+            valuesById[d.id] = { obj: d, series: d.value.series.map(p => ({ t: p.t_ms, v: p.v })) };
+        });
 
         // 1) Compute active triggers (Events)
         const activeEdgeIds = EventTriggerEngine.computeTriggersAtTime(valuesById, couplingGraph, tNowMs, triggerRuntime);
@@ -151,10 +170,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     addForm.onsubmit = (e) => {
         e.preventDefault();
         const label = document.getElementById('metric-label').value;
-        const type = document.getElementById('metric-type').value;
+        const typeStr = document.getElementById('metric-type').value;
         const initVal = parseInt(document.getElementById('metric-init-value').value);
-        const newMetric = { ...ValueValidator.createSkeleton(label.toLowerCase().replace(' ', '_'), label, 'user.defined'), provenance: { source_type: type === 'Raw' ? 'telemetry' : 'model', source_id: 'user_defined' }, value: initVal, history: [] };
-        for (let i = 0; i <= 200; i++) newMetric.history.push({ t: (i / 200) * durationMs, v: 10 + Math.random() * 80 });
+
+        const newMetric = {
+            ...ValueValidator.createSkeleton(label.toLowerCase().replace(' ', '_'), label, 'user.defined'),
+            provenance: {
+                source_type: typeStr === 'Raw' ? 'observed' : 'derived',
+                method: 'user_defined_initialization'
+            },
+            value: {
+                kind: "scalar",
+                current: initVal,
+                series: []
+            }
+        };
+        for (let i = 0; i <= 200; i++) {
+            newMetric.value.series.push({ t_ms: Math.floor((i / 200) * durationMs), v: 10 + Math.random() * 80 });
+        }
+
         if (ValueValidator.validate(newMetric).valid) {
             timelineData.push(newMetric);
             modal.style.display = 'none'; addForm.reset(); renderAll();

@@ -1,8 +1,12 @@
 {
     "meta": {
-        "id": "coupling-graph-v1",
-        "version": "1.0",
-        "timebase": "video"
+        "id": "causal-plus-graph",
+        "version": "1.1",
+        "timebase": "video",
+        "defaults": {
+            "max_skew_ms": 250,
+            "impact_mode": "blend"
+        }
     },
     "nodes": [
         {
@@ -17,44 +21,20 @@
     ],
     "edges": [
         {
-            "id": "e_delta_to_theta",
-            "type": "causal",
-            "from": "delta_resonance",
-            "to": "theta_intent",
-            "alignment": {
-                "mode": "soft_sync",
-                "offset_ms": 2000,
-                "max_skew_ms": 250
-            },
-            "impact": {
-                "function": "linear",
-                "gain": 0.35,
-                "clamp": [
-                    0,
-                    100
-                ]
-            },
-            "aggregation": {
-                "when_multiple_edges": "sum_then_clamp"
-            },
-            "guardrails": {
-                "enabled": true,
-                "min_confidence": 0.6
-            }
-        },
-        {
-            "id": "e_delta_spike_boost_theta",
+            "id": "e_delta_spike_replace_theta",
             "type": "event",
             "from": "delta_resonance",
             "to": "theta_intent",
+            "priority": 10,
             "alignment": {
                 "mode": "soft_sync",
                 "offset_ms": 0,
                 "max_skew_ms": 250
             },
             "impact": {
-                "function": "add",
-                "gain": 18,
+                "function": "set",
+                "mode": "replace",
+                "gain": 1.0,
                 "clamp": [
                     0,
                     100
@@ -69,8 +49,38 @@
             },
             "trigger": {
                 "kind": "spike",
-                "delta": 20,
-                "hold_ms": 400
+                "delta": 15,
+                "hold_ms": 1500,
+                "delay_ms": 100
+            }
+        },
+        {
+            "id": "e_sigma_blend_delta",
+            "type": "causal",
+            "from": "sigma_movement",
+            "to": "delta_resonance",
+            "priority": 0,
+            "alignment": {
+                "mode": "soft_sync",
+                "offset_ms": 500,
+                "max_skew_ms": 250
+            },
+            "impact": {
+                "function": "linear",
+                "mode": "blend",
+                "gain": 0.2,
+                "weight": 0.5,
+                "clamp": [
+                    0,
+                    100
+                ]
+            },
+            "aggregation": {
+                "when_multiple_edges": "sum_then_clamp"
+            },
+            "guardrails": {
+                "enabled": true,
+                "min_confidence": 0.6
             }
         }
     ]

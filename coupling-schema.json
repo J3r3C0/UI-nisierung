@@ -1,7 +1,7 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "coupling-schema.json",
-    "title": "CouplingGraph v1",
+    "title": "CouplingGraph v1 (Causal++ Enhanced)",
     "type": "object",
     "required": [
         "meta",
@@ -31,6 +31,23 @@
                         "video",
                         "system"
                     ]
+                },
+                "defaults": {
+                    "type": "object",
+                    "properties": {
+                        "max_skew_ms": {
+                            "type": "integer",
+                            "default": 250
+                        },
+                        "impact_mode": {
+                            "type": "string",
+                            "enum": [
+                                "blend",
+                                "replace"
+                            ],
+                            "default": "blend"
+                        }
+                    }
                 }
             }
         },
@@ -85,6 +102,10 @@
                         "type": "string",
                         "minLength": 1
                     },
+                    "priority": {
+                        "type": "integer",
+                        "default": 0
+                    },
                     "alignment": {
                         "type": "object",
                         "required": [
@@ -121,11 +142,25 @@
                                 "enum": [
                                     "linear",
                                     "add",
-                                    "mul"
+                                    "mul",
+                                    "set",
+                                    "replace",
+                                    "blend"
+                                ]
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": [
+                                    "replace",
+                                    "blend"
                                 ]
                             },
                             "gain": {
                                 "type": "number"
+                            },
+                            "weight": {
+                                "type": "number",
+                                "default": 1.0
                             },
                             "clamp": {
                                 "type": "array",
@@ -165,6 +200,14 @@
                             }
                         }
                     },
+                    "gate": {
+                        "type": "object",
+                        "properties": {
+                            "max_skew_ms": {
+                                "type": "integer"
+                            }
+                        }
+                    },
                     "trigger": {
                         "type": "object",
                         "required": [
@@ -199,6 +242,10 @@
                             },
                             "hold_ms": {
                                 "type": "integer"
+                            },
+                            "delay_ms": {
+                                "type": "integer",
+                                "default": 0
                             },
                             "scene": {
                                 "type": "object",
@@ -245,24 +292,6 @@
                                     "trigger"
                                 ]
                             }
-                        }
-                    },
-                    {
-                        "if": {
-                            "properties": {
-                                "trigger": {
-                                    "properties": {
-                                        "kind": {
-                                            "const": "threshold_crossing"
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "then": {
-                            "required": [
-                                "trigger"
-                            ]
                         }
                     }
                 ]

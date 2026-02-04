@@ -35,7 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         couplingGraph = { meta: { id: "hard-fallback" }, nodes: [], edges: [] };
     }
 
-    // ✅ Deterministic PRNG (reproducible across sessions)
+    // ✅ Deterministic PRNG
     function hashStringToSeed(str) {
         let h = 2166136261;
         for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
@@ -235,7 +235,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function renderAll() {
         const tNowMs = (video.currentTime || 0) * 1000;
 
-        // ✅ If user seeks backwards, reset runtime so events don't "stick from the future"
+        // Seek detection
         if (tNowMs + 250 < lastRenderTimeMs) {
             triggerRuntime.reset();
         }
@@ -246,8 +246,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             valuesById[d.id] = { obj: d, series: d.value.series.map(p => ({ t: p.t_ms, v: p.v })) };
         });
 
+        // 1) Compute active triggers
         const activeEdgeIds = EventTriggerEngine.computeTriggersAtTime(valuesById, couplingGraph, tNowMs, triggerRuntime);
-        const viewValues = CouplingEngine.applyCouplingGraph(valuesById, couplingGraph, tNowMs, activeEdgeIds);
+
+        // 2) Apply coupling graph (Causal++ Enhanced)
+        const viewValues = CouplingEngine.applyCouplingGraph(valuesById, couplingGraph, tNowMs, activeEdgeIds, triggerRuntime);
 
         renderTimelines(viewValues);
         renderAnalysisTags();
@@ -256,7 +259,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         drawGraph(selectedMetric, tNowMs, activeEdgeIds);
     }
 
-    // Modal & Video handlers
+    // Modal & Video handlers...
     addBtn.onclick = () => modal.style.display = 'flex';
     closeBtn.onclick = () => modal.style.display = 'none';
     window.onclick = (e) => { if (e.target == modal) modal.style.display = 'none'; };

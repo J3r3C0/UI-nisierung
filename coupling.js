@@ -1,6 +1,6 @@
 /**
  * coupling.js
- * Causal++ Spec v1 Engine Implementation.
+ * Causal++ Spec v1.1 Engine Implementation.
  */
 
 const CouplingEngine = {
@@ -35,6 +35,70 @@ const CouplingEngine = {
         return sourceVal * gain;
     },
 
+    /**
+     * ✅ Causal Breakdown v1.1 Normalizer
+     * Ensures old/partial forensic data matches the v1.1 spec.
+     */
+    normalizeBreakdown(breakdown) {
+        const tNow = typeof breakdown?.t === "number" ? breakdown.t : null;
+        const DEFAULT_SEVERITY = {
+            MAX_SKEW_EXCEEDED: "warn",
+            SOURCE_MISSING: "warn",
+            VALIDATION_ERROR: "error",
+            SUPPRESSED_BY_REPLACE: "info",
+            OUT_OF_WINDOW: "info",
+            UNKNOWN: "warn",
+        };
+
+        function mapReason(raw) {
+            const s = String(raw || "").toLowerCase();
+            if (s.includes("skew")) return "MAX_SKEW_EXCEEDED";
+            if (s.includes("replace") || s.includes("suppress")) return "SUPPRESSED_BY_REPLACE";
+            if (s.includes("schema") || s.includes("validation")) return "VALIDATION_ERROR";
+            if (s.includes("missing") || s.includes("nan")) return "SOURCE_MISSING";
+            if (s.includes("window") || s.includes("hold")) return "OUT_OF_WINDOW";
+            return "UNKNOWN";
+        }
+
+        function inferLayer(item) {
+            if (item?.layer === "replace" || item?.layer === "blend") return item.layer;
+            if (item?.impact?.mode === "replace") return "replace";
+            if (mapReason(item?.reason) === "SUPPRESSED_BY_REPLACE") return "blend";
+            return "blend";
+        }
+
+        const blocked = Array.isArray(breakdown?.blocked) ? breakdown.blocked : [];
+        const normalized = blocked.map((item) => {
+            const reason = mapReason(item?.reason);
+            const severity = item?.severity || DEFAULT_SEVERITY[reason] || "warn";
+            const layer = inferLayer(item);
+            return {
+                edge_id: String(item?.edge_id ?? "unknown"),
+                layer,
+                reason,
+                severity,
+                t_trigger: item?.t_trigger ?? null,
+                t_effective: item?.t_effective ?? null,
+                skew_ms: item?.skew_ms ?? null,
+                max_skew_ms: item?.max_skew_ms ?? null,
+                gate_source: item?.gate_source ?? "unknown",
+                window: {
+                    start: item?.window?.start ?? null,
+                    end: item?.window?.end ?? null,
+                    now: item?.window?.now ?? tNow
+                },
+                impact: item?.impact ?? (item?.edge_id ? { mode: layer, kind: null, gain: null, weight: null } : null),
+                src: item?.src ?? null,
+                preview: item?.preview ?? null,
+                note: item?.note ?? ""
+            };
+        });
+
+        const result = { ...breakdown, blocked: normalized };
+        if (!result.schema_version) result.schema_version = "causal_breakdown_v1.1";
+        return result;
+    },
+
     applyCouplingGraph(valuesById, graph, tNowMs, triggerActiveEdgeIds, triggerRuntime) {
         const values = {};
         const breakdowns = {};
@@ -59,20 +123,21 @@ const CouplingEngine = {
                 const tEffective = ev.tMs + delay;
                 const tEnd = tEffective + hold;
 
-                // Only consider if we are in the playback window for this fire event
-                // and it's not a future event (though seek-reset handles most of this)
                 if (ev.tMs <= tNowMs) {
                     const maxSkew = edge.gate?.max_skew_ms ?? edge.alignment?.max_skew_ms ?? globalMaxSkew;
                     const skew = Math.abs(tEffective - ev.tMs);
                     const passesGate = skew <= maxSkew && tEffective <= tNowMs + maxSkew;
 
                     if (tNowMs >= tEffective && tNowMs <= tEnd) {
+                        const nakedImpact = this.computeEdgeImpact(valuesById, edge, tNowMs);
+                        const layer = (edge.impact?.mode || globalMode) === "replace" ? "replace" : "blend";
+
                         if (passesGate) {
                             activeImpacts.push({
                                 to: edge.to,
                                 mode: edge.impact?.mode || globalMode,
                                 kind: edge.impact?.function || "add",
-                                value: this.computeEdgeImpact(valuesById, edge, tNowMs),
+                                value: nakedImpact,
                                 weight: edge.impact?.weight ?? 1.0,
                                 priority: edge.priority || 0,
                                 id: edge.id,
@@ -86,10 +151,28 @@ const CouplingEngine = {
                             blockedImpacts.push({
                                 to: edge.to,
                                 edge_id: edge.id,
+                                layer: layer,
                                 reason: "MAX_SKEW_EXCEEDED",
+                                severity: "warn",
+                                t_trigger: ev.tMs,
+                                t_effective: tEffective,
                                 skew_ms: skew,
                                 max_skew_ms: maxSkew,
-                                source: edge.gate?.max_skew_ms ? "edge.gate" : (edge.alignment?.max_skew_ms ? "edge.alignment" : "defaults")
+                                gate_source: edge.gate?.max_skew_ms ? "edge.gate" : (edge.alignment?.max_skew_ms ? "edge.alignment" : "defaults"),
+                                window: { start: tEffective, end: tEnd, now: tNowMs },
+                                impact: {
+                                    mode: layer,
+                                    kind: edge.impact?.function || "add",
+                                    gain: edge.impact?.gain ?? 1.0,
+                                    weight: edge.impact?.weight ?? 1.0
+                                },
+                                src: { metric_id: edge.from, value: nakedImpact / (edge.impact?.gain || 1.0) },
+                                preview: {
+                                    would_apply: true,
+                                    would_add: (layer === "blend" && (edge.impact?.function === "add" || !edge.impact?.function)) ? nakedImpact : null,
+                                    would_factor: (layer === "blend" && edge.impact?.function === "mul") ? (1 + nakedImpact) : null,
+                                    would_value: (layer === "replace" && edge.impact?.function === "set") ? nakedImpact : null
+                                }
                             });
                         }
                     }
@@ -126,7 +209,7 @@ const CouplingEngine = {
             const baseValue = targetObj?.value.current || 0;
             const range = targetObj?.semantics?.range || { min: 0, max: 100 };
 
-            const breakdown = {
+            const rawBreakdown = {
                 t: tNowMs,
                 target: toId,
                 base: baseValue,
@@ -147,32 +230,15 @@ const CouplingEngine = {
                 blocked: blocked
             };
 
-            if (impacts.length === 0) {
-                breakdown.final = Math.max(range.min, Math.min(range.max, baseValue));
-                values[toId] = breakdown.final;
-                breakdowns[toId] = breakdown;
-                return;
-            }
-
             // Sorting
             impacts.sort((a, b) => (b.priority - a.priority) || a.id.localeCompare(b.id));
 
             // Replace Resolution
-            const replaceCandidates = impacts.filter(i => i.mode === "replace");
-            breakdown.replace.candidates = replaceCandidates.map(c => ({
-                edge_id: c.id,
-                priority: c.priority,
-                t_trigger: c.tTrigger,
-                t_effective: c.tEffective,
-                skew_ms: c.skew,
-                passes_gate: true
-            }));
-
             const replaceWinnerIdx = impacts.findIndex(i => i.mode === "replace");
             if (replaceWinnerIdx !== -1) {
                 const winner = impacts[replaceWinnerIdx];
-                breakdown.replace.active = true;
-                breakdown.replace.winner = {
+                rawBreakdown.replace.active = true;
+                rawBreakdown.replace.winner = {
                     edge_id: winner.id,
                     priority: winner.priority,
                     t_trigger: winner.tTrigger,
@@ -187,14 +253,29 @@ const CouplingEngine = {
                 else if (winner.kind === "mul") val = baseValue * winner.value;
                 else val = baseValue + winner.value;
 
-                breakdown.after_replace = val;
-
-                // Final Clamp
+                rawBreakdown.after_replace = val;
                 const edgeClamp = winner.clamp;
                 const finalMin = edgeClamp ? edgeClamp[0] : range.min;
                 const finalMax = edgeClamp ? edgeClamp[1] : range.max;
-                breakdown.final = Math.max(finalMin, Math.min(finalMax, val));
-                breakdown.blend.suppressed_by_replace = true;
+                rawBreakdown.final = Math.max(finalMin, Math.min(finalMax, val));
+
+                rawBreakdown.blend.suppressed_by_replace = true;
+                impacts.filter(i => i.mode === "blend").forEach(bi => {
+                    rawBreakdown.blocked.push({
+                        edge_id: bi.id,
+                        layer: "blend",
+                        reason: "SUPPRESSED_BY_REPLACE",
+                        severity: "info",
+                        t_trigger: bi.tTrigger,
+                        t_effective: bi.tEffective,
+                        skew_ms: bi.skew,
+                        max_skew_ms: null,
+                        gate_source: "logic",
+                        window: { start: bi.tEffective, end: bi.tEnd, now: tNowMs },
+                        impact: { mode: "blend", kind: bi.kind, gain: null, weight: bi.weight },
+                        preview: { would_apply: true, would_add: bi.kind === "add" ? bi.value : null, would_factor: bi.kind === "mul" ? (1 + bi.value) : null }
+                    });
+                });
             } else {
                 // Blend Resolution
                 let deltaAdd = 0;
@@ -202,69 +283,35 @@ const CouplingEngine = {
                 const totalWeight = impacts.reduce((acc, i) => acc + i.weight, 0);
 
                 impacts.forEach(i => {
-                    const w = breakdown.blend.normalize_weights ? (i.weight / totalWeight) : i.weight;
+                    const edgeIdx = (graph.edges || []).find(e => e.id === i.id);
+                    const gain = edgeIdx?.impact?.gain || 1.0;
+                    const w = rawBreakdown.blend.normalize_weights ? (i.weight / totalWeight) : i.weight;
                     const contribution = i.value * w;
 
                     if (i.kind === "add" || i.kind === "linear") {
                         deltaAdd += contribution;
-                        breakdown.blend.add_terms.push({
-                            edge_id: i.id,
-                            src: i.value / (edge.impact?.gain || 1.0), // reversed for UI src display
-                            gain: i.gain, // Wait, gain wasn't in the object, I should add it
-                            weight: i.weight,
-                            contribution: contribution
+                        rawBreakdown.blend.add_terms.push({
+                            edge_id: i.id, src: i.value / gain, gain: gain, weight: i.weight, contribution: contribution
                         });
                     } else if (i.kind === "mul") {
                         const factor = (1 + contribution);
                         mulFactor *= factor;
-                        breakdown.blend.mul_terms.push({
-                            edge_id: i.id,
-                            src: 0, // placeholder
-                            gain: 0,
-                            weight: i.weight,
-                            factor: factor
+                        rawBreakdown.blend.mul_terms.push({
+                            edge_id: i.id, src: i.value / gain, gain: gain, weight: i.weight, factor: factor
                         });
                     }
                 });
 
-                // Correction: let's re-gather impact info properly for the terms
-                breakdown.blend.add_terms = [];
-                breakdown.blend.mul_terms = [];
-                impacts.forEach(i => {
-                    const edge = edgesById[i.id];
-                    const w = breakdown.blend.normalize_weights ? (i.weight / totalWeight) : i.weight;
-                    const contribution = i.value * w;
-                    const srcVal = i.value / (edge.impact?.gain || 1.0);
-
-                    if (i.kind === "add" || i.kind === "linear") {
-                        breakdown.blend.add_terms.push({
-                            edge_id: i.id,
-                            src: srcVal,
-                            gain: edge.impact?.gain || 1.0,
-                            weight: i.weight,
-                            contribution: contribution
-                        });
-                    } else if (i.kind === "mul") {
-                        breakdown.blend.mul_terms.push({
-                            edge_id: i.id,
-                            src: srcVal,
-                            gain: edge.impact?.gain || 1.0,
-                            weight: i.weight,
-                            factor: (1 + contribution)
-                        });
-                    }
-                });
-
-                breakdown.blend.delta_add = deltaAdd;
-                breakdown.blend.delta_mul = mulFactor;
-
+                rawBreakdown.blend.delta_add = deltaAdd;
+                rawBreakdown.blend.delta_mul = mulFactor;
                 let blended = (baseValue + deltaAdd) * mulFactor;
-                breakdown.after_blend = blended;
-                breakdown.final = Math.max(range.min, Math.min(range.max, blended));
+                rawBreakdown.after_blend = blended;
+                rawBreakdown.final = Math.max(range.min, Math.min(range.max, blended));
             }
 
-            values[toId] = breakdown.final;
-            breakdowns[toId] = breakdown;
+            const normalized = this.normalizeBreakdown(rawBreakdown);
+            values[toId] = normalized.final;
+            breakdowns[toId] = normalized;
         });
 
         return { values, breakdowns };

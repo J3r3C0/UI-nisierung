@@ -751,6 +751,29 @@ body {
     gap: 8px;
 }
 
+.filter-container {
+    display: flex;
+    gap: 6px;
+    margin: 8px 0;
+}
+
+.filter-chip {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.6rem;
+    cursor: pointer;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    transition: all 0.2s;
+}
+
+.filter-chip.active {
+    background: var(--accent-color);
+    color: black;
+    border-color: var(--accent-color);
+}
+
 .collapsible-trigger {
     background: transparent;
     border: none;

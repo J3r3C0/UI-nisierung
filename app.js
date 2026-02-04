@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let inspectingMetricId = null;
     let isFrozen = false;
     let currentBreakdowns = {};
+    let currentBlockedFilter = 'all';
 
     try {
         const response = await fetch('coupling-graph.json');
@@ -185,11 +186,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderInspector() {
         if (!inspectingMetricId || !inspectorPanel.classList.contains('active')) return;
-        const breakdown = currentBreakdowns[inspectingMetricId];
-        if (!breakdown) return;
+        const rawBreakdown = currentBreakdowns[inspectingMetricId] || {};
+        const breakdown = CouplingEngine.normalizeBreakdown(rawBreakdown);
+        if (!breakdown.target) return;
 
         const fmt = (n) => n === null || n === undefined ? '—' : n.toFixed(2);
-        const fmtMs = (n) => n.toLocaleString().replace(/,/g, ' ');
+        const fmtMs = (n) => n === null ? '—' : n.toLocaleString().replace(/,/g, ' ');
+
+        const filteredBlocked = breakdown.blocked.filter(b => {
+            if (currentBlockedFilter === 'all') return true;
+            return b.severity === currentBlockedFilter;
+        });
 
         inspectorPanel.innerHTML = `
             <div class="inspector-header">
@@ -208,17 +215,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             <div class="section-label">Value Pipeline</div>
             <div class="pipeline-container">
                 <div class="pipeline-grid">
-                    <div class="pipeline-cell" title="Deterministic source value">
+                    <div class="pipeline-cell" title="Source value">
                         <div class="cell-label">Base</div>
                         <div class="cell-value">${fmt(breakdown.base)}</div>
                     </div>
                     <div class="pipeline-arrow">→</div>
-                    <div class="pipeline-cell" title="After Replace winner">
+                    <div class="pipeline-cell" title="Replace winning impact">
                         <div class="cell-label">Replace</div>
                         <div class="cell-value">${breakdown.replace.active ? fmt(breakdown.after_replace) : '—'}</div>
                     </div>
                     <div class="pipeline-arrow">→</div>
-                    <div class="pipeline-cell" title="After Blend (ADD → MUL)">
+                    <div class="pipeline-cell" title="Blend modulation">
                         <div class="cell-label">Blend</div>
                         <div class="cell-value">${breakdown.blend.suppressed_by_replace ? '(skip)' : (breakdown.after_blend !== null ? fmt(breakdown.after_blend) : '—')}</div>
                     </div>
@@ -246,33 +253,37 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div style="font-size:0.7rem; margin-bottom:8px">Δ_add: ${fmt(breakdown.blend.delta_add)} | Δ_mul: x${fmt(breakdown.blend.delta_mul)}</div>
                     ${breakdown.blend.add_terms.map(t => `
                         <div class="term-item">
-                            <div style="display:grid">
-                                <span class="term-edge">${t.edge_id}</span>
-                                <span style="font-size:0.6rem; opacity:0.6">src ${fmt(t.src)} · gain ${fmt(t.gain)} · w ${fmt(t.weight)}</span>
-                            </div>
+                            <div style="display:grid"><span class="term-edge">${t.edge_id}</span><span style="font-size:0.6rem; opacity:0.6">src ${fmt(t.src)} · gain ${fmt(t.gain)} · w ${fmt(t.weight)}</span></div>
                             <span>+${fmt(t.contribution)}</span>
                         </div>
                     `).join('')}
                     ${breakdown.blend.mul_terms.map(t => `
                         <div class="term-item">
-                            <div style="display:grid">
-                                <span class="term-edge" style="color:#00ffcc">${t.edge_id}</span>
-                                <span style="font-size:0.6rem; opacity:0.6">src ${fmt(t.src)} · gain ${fmt(t.gain)} · w ${fmt(t.weight)}</span>
-                            </div>
+                            <div style="display:grid"><span class="term-edge" style="color:#00ffcc">${t.edge_id}</span><span style="font-size:0.6rem; opacity:0.6">src ${fmt(t.src)} · gain ${fmt(t.gain)} · w ${fmt(t.weight)}</span></div>
                             <span>x${fmt(t.factor)}</span>
                         </div>
                     `).join('')}
                 `}
             </div>
 
-            <div class="section-label">Blocked Impacts</div>
-            ${breakdown.blocked.map(b => `
-                <div class="forensic-card block-card" style="margin-bottom:8px">
+            <div class="section-label" style="display:flex; justify-content:space-between; align-items:center">
+                Blocked Impacts
+                <div class="filter-container">
+                    <span class="filter-chip ${currentBlockedFilter === 'all' ? 'active' : ''}" onclick="setBlockedFilter('all')">All</span>
+                    <span class="filter-chip ${currentBlockedFilter === 'error' ? 'active' : ''}" onclick="setBlockedFilter('error')">Error</span>
+                    <span class="filter-chip ${currentBlockedFilter === 'warn' ? 'active' : ''}" onclick="setBlockedFilter('warn')">Warn</span>
+                    <span class="filter-chip ${currentBlockedFilter === 'info' ? 'active' : ''}" onclick="setBlockedFilter('info')">Info</span>
+                </div>
+            </div>
+            
+            ${filteredBlocked.map(b => `
+                <div class="forensic-card block-card" style="margin-bottom:8px; border-left: 2px solid ${b.severity === 'error' ? '#ff4444' : (b.severity === 'warn' ? '#ffaa00' : '#00f2ff')}">
                     <div class="forensic-row"><span class="key">Edge</span><span class="val">${b.edge_id}</span></div>
                     <div class="forensic-row"><span class="key">Reason</span><span class="val">${b.reason}</span></div>
-                    <div class="forensic-row"><span class="key">Skew</span><span class="val">${fmtMs(b.skew_ms)} > ${b.max_skew_ms}</span></div>
+                    ${b.skew_ms !== null ? `<div class="forensic-row"><span class="key">Skew</span><span class="val">${fmtMs(b.skew_ms)} ms (max ${b.max_skew_ms})</span></div>` : ''}
+                    ${b.preview?.would_apply ? `<div class="forensic-row"><span class="key">Preview</span><span class="val" style="color:var(--text-secondary)">Would have modified by ${b.preview.would_add ? '+' + fmt(b.preview.would_add) : 'x' + fmt(b.preview.would_factor)}</span></div>` : ''}
                 </div>
-            `).join('') || '<div style="font-size:0.7rem; color:var(--text-secondary)">Zero blocked impacts.</div>'}
+            `).join('') || '<div style="font-size:0.7rem; color:var(--text-secondary)">No impacts match filter.</div>'}
 
             <div class="inspector-footer">
                 <button class="btn-inspector" onclick="toggleFreeze()">${isFrozen ? 'Unfreeze' : 'Freeze Frame'}</button>
@@ -281,13 +292,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
     }
 
+    function renderManagementList() {
+        rightMetricList.innerHTML = '';
+        timelineData.forEach((data, index) => {
+            const item = document.createElement('div');
+            item.className = 'metric-config-item';
+            item.innerHTML = `
+                <div class="metric-info">
+                    <span class="metric-name">${data.label}</span>
+                    <span class="metric-type">${data.provenance.source_type} | ${data.semantics.domain}</span>
+                </div>
+                <div class="metric-actions">
+                    <button class="action-btn" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+                    <button class="action-btn delete" title="Delete" onclick="deleteMetric(${index})"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+                </div>
+            `;
+            rightMetricList.appendChild(item);
+        });
+    }
+
+    window.setBlockedFilter = (f) => { currentBlockedFilter = f; renderInspector(); };
     window.closeInspector = () => { inspectorPanel.classList.remove('active'); inspectingMetricId = null; };
     window.toggleFreeze = () => { isFrozen = !isFrozen; renderInspector(); };
     window.copyBreakdown = () => {
         const b = currentBreakdowns[inspectingMetricId];
         if (b) {
             navigator.clipboard.writeText(JSON.stringify(b, null, 2));
-            alert("Forensic Breakdown copied as JSON.");
+            alert("Forensic Breakdown v1.1 copied.");
         }
     };
 
@@ -314,7 +345,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         renderInspector();
     }
 
-    // Modal & Video handlers...
+    // Handlers
     addBtn.onclick = () => modal.style.display = 'flex';
     closeBtn.onclick = () => modal.style.display = 'none';
     addForm.onsubmit = (e) => {

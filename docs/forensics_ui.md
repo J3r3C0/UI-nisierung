@@ -29,6 +29,15 @@ Use the filter chips (`All`, `Error`, `Warn`, `Info`) to find why a specific cau
 - **Orange (Warn)**: Temporal skew too high.
 - **Cyan (Info)**: Suppressed by a `Replace` impact.
 
+### Causal Timeline Export (ZIP)
+The inspector provides a **"Export Snapshot (ZIP)"** feature that generates a point-in-time audit bundle. This ZIP contains:
+- `metadata.json`: Contextual info (timestamp, target metric, app version).
+- `coupling-graph.json`: The layout and logic rules active during the snapshot.
+- `breakdown.json`: The v1.1 Causal Breakdown for the inspected metric.
+- `state.json`: A mapping of all metrics to their exact values at that timestamp.
+
+This bundle is ideal for offline auditing, regression testing, and bug reporting.
+
 ## 3. Advanced Tools
 - **Freeze Frame**: Pauses the forensic view on the selected `t`. Useful for investigating spikes while the video plays.
 - **Copy JSON**: Dumps the raw forensic payload (`causal_breakdown_v1.1`) for bug reports or data science analysis.

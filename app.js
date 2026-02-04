@@ -294,13 +294,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <span class="val" style="color:var(--text-secondary)">
                                 ${b.preview.would_add ? '+' + fmt(b.preview.would_add) : (b.preview.would_factor ? 'x' + fmt(b.preview.would_factor) : (b.preview.candidate ? 'val: ' + fmt(b.preview.candidate) : '—'))}
                             </span>
-                        </div>` : ''}
+        </div>` : ''}
                 </div>
             `).join('') || '<div style="font-size:0.7rem; color:var(--text-secondary)">No impacts match filter.</div>'}
 
             <div class="inspector-footer">
-                <button class="btn-inspector" onclick="toggleFreeze()">${isFrozen ? 'Unfreeze' : 'Freeze Frame'}</button>
-                <button class="btn-inspector" onclick="copyBreakdown()">Copy JSON</button>
+                <button class="btn-inspector" onclick="copyBreakdownJSON()">Copy JSON</button>
+                <button class="btn-inspector" onclick="exportCausalSnapshot()" style="border-color:var(--accent-color)">Export SNAPSHOT (ZIP)</button>
+                <button class="btn-inspector" style="margin-left:auto" onclick="toggleFreeze()">${isFrozen ? 'RESUME' : 'FREEZE FRAME'}</button>
             </div>
         `;
     }
@@ -325,9 +326,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     window.setBlockedFilter = (f) => { currentBlockedFilter = f; renderInspector(); };
+    window.exportCausalSnapshot = async () => {
+        if (!inspectingMetricId) return;
+        const zip = new JSZip();
+        const tNow = lastRenderTimeMs;
+        const breakdown = currentBreakdowns[inspectingMetricId];
+
+        // 1. Metadata
+        const meta = {
+            snapshot_version: "1.1",
+            timestamp_ms: tNow,
+            target_metric: inspectingMetricId,
+            app_version: "UI-nisierung v1.1",
+            exported_at: new Date().toISOString()
+        };
+
+        // 2. State Mapping
+        const state = {};
+        timelineData.forEach(d => {
+            state[d.id] = CouplingEngine.sampleAt(d.value.series, tNow);
+        });
+
+        zip.file("metadata.json", JSON.stringify(meta, null, 2));
+        zip.file("coupling-graph.json", JSON.stringify(couplingGraph, null, 2));
+        zip.file("breakdown.json", JSON.stringify(breakdown, null, 2));
+        zip.file("state.json", JSON.stringify(state, null, 2));
+
+        const content = await zip.generateAsync({ type: "blob" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(content);
+        link.download = `causal_snapshot_${inspectingMetricId}_t${Math.floor(tNow)}.zip`;
+        link.click();
+
+        console.log(`✅ Snapshot exported: ${link.download}`);
+    };
+
     window.closeInspector = () => { inspectorPanel.classList.remove('active'); inspectingMetricId = null; };
     window.toggleFreeze = () => { isFrozen = !isFrozen; renderInspector(); };
-    window.copyBreakdown = () => {
+    window.copyBreakdownJSON = () => {
         const b = currentBreakdowns[inspectingMetricId];
         if (b) {
             navigator.clipboard.writeText(JSON.stringify(b, null, 2));

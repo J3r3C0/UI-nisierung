@@ -83,11 +83,14 @@ const ok = validate(breakdown);
 const softWarnings = [];
 if (breakdown.blocked) {
     breakdown.blocked.forEach((b, idx) => {
+        const isMissing = (val) => val === null || val === undefined;
+
         if (b.reason === "MAX_SKEW_EXCEEDED") {
-            if (b.skew_ms === null) softWarnings.push(`blocked[${idx}]: Reason is MAX_SKEW_EXCEEDED but skew_ms is null.`);
-            if (b.max_skew_ms === null) softWarnings.push(`blocked[${idx}]: Reason is MAX_SKEW_EXCEEDED but max_skew_ms is null.`);
+            if (isMissing(b.skew_ms)) softWarnings.push(`blocked[${idx}]: Reason is MAX_SKEW_EXCEEDED but skew_ms is missing/null.`);
+            if (isMissing(b.max_skew_ms)) softWarnings.push(`blocked[${idx}]: Reason is MAX_SKEW_EXCEEDED but max_skew_ms is missing/null.`);
+            if (isMissing(b.gate_source) || b.gate_source === "unknown") softWarnings.push(`blocked[${idx}]: Reason is MAX_SKEW_EXCEEDED but gate_source is unknown/missing.`);
         }
-        if (b.reason === "SUPPRESSED_BY_REPLACE" && !b.message) {
+        if (b.reason === "SUPPRESSED_BY_REPLACE" && (!b.message || b.message.trim() === "")) {
             softWarnings.push(`blocked[${idx}]: Reason is SUPPRESSED_BY_REPLACE but message is empty.`);
         }
     });

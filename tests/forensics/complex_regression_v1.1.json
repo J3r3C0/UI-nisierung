@@ -1,0 +1,66 @@
+{
+    "breakdown_version": "1.1",
+    "t": 45000,
+    "target": "resonance_v3",
+    "base": 10.0,
+    "after_replace": 25.0,
+    "after_blend": null,
+    "final": 25.0,
+    "replace": {
+        "active": true,
+        "winner": {
+            "edge_id": "e_trigger_set_override",
+            "priority": 100,
+            "t_trigger": 44000,
+            "t_effective": 44500,
+            "skew_ms": 500,
+            "hold_start": 44500,
+            "hold_end": 50000
+        },
+        "candidates": []
+    },
+    "blend": {
+        "enabled": true,
+        "suppressed_by_replace": true,
+        "normalize_weights": false,
+        "delta_add": 0,
+        "delta_mul": 1,
+        "add_terms": [],
+        "mul_terms": []
+    },
+    "blocked": [
+        {
+            "edge_id": "e_ambient_noise",
+            "target_id": "resonance_v3",
+            "reason": "SUPPRESSED_BY_REPLACE",
+            "severity": "info",
+            "ts_ms": 45000,
+            "message": "Blend suppressed because replace winner e_trigger_set_override is active.",
+            "preview": {
+                "mode": "blend",
+                "kind": "add",
+                "weight": 1.0,
+                "src": 5.0,
+                "would_add": 5.0
+            }
+        },
+        {
+            "edge_id": "e_high_pressure_spike",
+            "target_id": "resonance_v3",
+            "reason": "MAX_SKEW_EXCEEDED",
+            "severity": "warn",
+            "ts_ms": 45000,
+            "fired_at_ms": 40000,
+            "effect_at_ms": 44500,
+            "skew_ms": 1500,
+            "max_skew_ms": 500,
+            "gate_source": "edge",
+            "message": "Skew 1500ms exceeds limit 500ms.",
+            "preview": {
+                "mode": "blend",
+                "kind": "mul",
+                "would_factor": 1.15
+            }
+        }
+    ]
+}

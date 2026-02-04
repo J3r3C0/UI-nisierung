@@ -198,6 +198,7 @@
             "type": "string",
             "enum": [
                 "MAX_SKEW_EXCEEDED",
+                "SUPPRESSED_BY_REPLACE",
                 "NEGATIVE_TIME_JUMP_SEEK",
                 "OUTSIDE_HOLD_WINDOW",
                 "MISSING_SOURCE_METRIC",

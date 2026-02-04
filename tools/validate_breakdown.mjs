@@ -13,7 +13,7 @@ import path from "path";
 import { pathToFileURL } from "url";
 import Ajv2020 from "ajv/dist/2020.js";
 
-// ---- paths (adjust if needed) ----
+// ---- paths ----
 const SCHEMA_PATH = path.resolve("schemas/causal_breakdown_v1.1.schema.json");
 const NORMALIZER_PATH = path.resolve("src/forensics/normalizeBreakdown.js");
 
@@ -49,6 +49,9 @@ try {
 // ---- normalize (legacy-safe) ----
 let breakdown = raw;
 if (typeof normalizeBreakdown === "function") {
+    if (!raw.breakdown_version) {
+        console.warn(`[Audit] ⚠ Legacy payload detected in ${path.basename(file)} (missing breakdown_version). Normalizing to v1.1...`);
+    }
     try {
         breakdown = normalizeBreakdown(raw);
     } catch (e) {
@@ -76,33 +79,46 @@ const ajv = new Ajv2020({
 const validate = ajv.compile(schema);
 const ok = validate(breakdown);
 
+// ---- Soft Policy Checks (Warn only) ----
+const softWarnings = [];
+if (breakdown.blocked) {
+    breakdown.blocked.forEach((b, idx) => {
+        if (b.reason === "MAX_SKEW_EXCEEDED") {
+            if (b.skew_ms === null) softWarnings.push(`blocked[${idx}]: Reason is MAX_SKEW_EXCEEDED but skew_ms is null.`);
+            if (b.max_skew_ms === null) softWarnings.push(`blocked[${idx}]: Reason is MAX_SKEW_EXCEEDED but max_skew_ms is null.`);
+        }
+        if (b.reason === "SUPPRESSED_BY_REPLACE" && !b.message) {
+            softWarnings.push(`blocked[${idx}]: Reason is SUPPRESSED_BY_REPLACE but message is empty.`);
+        }
+    });
+}
+
 // ---- output ----
-if (ok) {
-    console.log("✅ VALID — Causal Breakdown conforms to v1.1");
+if (ok && softWarnings.length === 0) {
+    console.log(`✅ VALID — ${path.basename(file)} conforms to v1.1`);
+    if (!raw.breakdown_version) console.log("   (Success after normalization)");
     process.exit(0);
 }
 
-// ---- errors ----
-const errors = validate.errors || [];
-const hasErrorSeverity =
-    breakdown?.blocked?.some(b => b?.severity === "error");
-
-console.error("❌ INVALID — Schema validation failed");
-
-if (PRETTY) {
-    for (const e of errors) {
-        console.error(
-            `  • ${e.instancePath || "/"} ${e.message}` +
-            (e.params ? ` (${JSON.stringify(e.params)})` : "")
-        );
+if (!ok) {
+    console.error(`❌ INVALID — Schema validation failed for ${path.basename(file)}`);
+    const errors = validate.errors || [];
+    if (PRETTY) {
+        for (const e of errors) {
+            console.error(`  • ${e.instancePath || "/"} ${e.message} ${e.params ? JSON.stringify(e.params) : ""}`);
+        }
+    } else {
+        console.error(JSON.stringify(errors, null, 2));
     }
-} else {
-    console.error(JSON.stringify(errors, null, 2));
 }
 
-if (STRICT && hasErrorSeverity) {
-    console.error("⛔ Strict mode: blocking due to severity=error in blocked[]");
-    process.exit(1);
+if (softWarnings.length > 0) {
+    console.warn(`⚠ POLICY — Issues found in ${path.basename(file)} (v1.1 Soft Policy):`);
+    softWarnings.forEach(w => console.warn(`  • ${w}`));
+    if (STRICT && ok) {
+        console.error("⛔ Strict mode: failing due to policy warnings.");
+        process.exit(1);
+    }
 }
 
-process.exit(1);
+process.exit(ok ? 0 : 1);

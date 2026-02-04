@@ -129,8 +129,42 @@
             </form>
         </div>
     </div>
+    <!-- Edge Editor Modal -->
+    <div id="edge-editor-modal" class="modal">
+        <div class="modal-content small">
+            <div class="flex-between" style="margin-bottom:20px;">
+                <h3 id="edit-edge-id" style="margin:0; font-size:1rem; color:var(--accent-color)">Edge Logic</h3>
+                <button class="icon-btn"
+                    onclick="document.getElementById('edge-editor-modal').style.display='none'">✕</button>
+            </div>
+            <div class="form-group">
+                <label for="edit-priority">Priority</label>
+                <input type="number" id="edit-priority" step="1" title="Edge Priority">
+            </div>
+            <div class="form-group">
+                <label for="edit-gain">Gain</label>
+                <input type="number" id="edit-gain" step="0.1" title="Impact Gain">
+            </div>
+            <div class="form-group">
+                <label for="edit-weight">Weight</label>
+                <input type="number" id="edit-weight" step="0.1" title="Impact Weight">
+            </div>
+            <div class="form-group">
+                <label for="edit-skew">Max Skew (ms)</label>
+                <input type="number" id="edit-skew" step="10" title="Maximum Temporal Skew">
+            </div>
+            <div class="flex-between mt-20 gap-10">
+                <button class="btn-inspector" style="flex:1"
+                    onclick="document.getElementById('edge-editor-modal').style.display='none'">Cancel</button>
+                <button class="btn-inspector" style="flex:1; border-color:var(--accent-color)"
+                    onclick="saveEdgeChanges()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
     <script src="validator.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="src/forensics/forensic-utils.js"></script>
     <script src="coupling.js"></script>
     <script src="coupling-validator.js"></script>
     <script src="event-triggers.js"></script>

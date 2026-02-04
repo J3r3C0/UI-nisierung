@@ -66,6 +66,13 @@ jobs:
             node tools/validate_breakdown.mjs "$f" --pretty
           done
 
+          # Also validate ZIP bundles in audit_exports
+          echo "Validating ZIP bundles in audit_exports:"
+          find audit_exports -maxdepth 2 -type f -name "*.zip" -print0 2>/dev/null | while IFS= read -r -d '' z; do
+            echo " - $z"
+            node tools/validate_snapshot_bundle.mjs "$z" --pretty
+          done
+
       - name: Summary
         if: success()
         run: echo "✅ All forensic exports validated against causal_breakdown v1.1"

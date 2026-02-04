@@ -15,11 +15,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Runtime state
     const triggerRuntime = new TriggerRuntime();
-    let couplingGraph = { meta: {}, nodes: [], edges: [] };
+    let couplingGraph = { meta: {}, nodes: [], edges: [] }; // The current "Applied" Graph
+
+    const editorState = {
+        enabled: false,           // UI Toggle
+        dirty: false,             // Draft != Master
+        draftGraph: null,         // Cloned instance for editing
+        validation: { ok: true, errors: [] },
+        previewBreakdowns: {}     // Computed from draftGraph
+    };
+
     let lastRenderTimeMs = 0;
     let inspectingMetricId = null;
     let isFrozen = false;
-    let currentBreakdowns = {};
+    let currentBreakdowns = {};   // Active breakdowns (Simulation)
     let currentBlockedFilter = 'all';
 
     try {
@@ -186,14 +195,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function renderInspector() {
         if (!inspectingMetricId || !inspectorPanel.classList.contains('active')) return;
-        const rawBreakdown = currentBreakdowns[inspectingMetricId] || {};
+
+        const isDraftMode = editorState.enabled && editorState.draftGraph;
+        const rawBreakdown = isDraftMode
+            ? (editorState.previewBreakdowns[inspectingMetricId] || {})
+            : (currentBreakdowns[inspectingMetricId] || {});
+
         const breakdown = CouplingEngine.normalizeBreakdown(rawBreakdown);
-        if (!breakdown.target) return;
+        if (!breakdown.target && !isDraftMode) return;
 
         const fmt = (n) => n === null || n === undefined ? '—' : n.toFixed(2);
         const fmtMs = (n) => n === null ? '—' : n.toLocaleString().replace(/,/g, ' ');
 
-        const filteredBlocked = breakdown.blocked.filter(b => {
+        const filteredBlocked = (breakdown.blocked || []).filter(b => {
             if (currentBlockedFilter === 'all') return true;
             return b.severity === currentBlockedFilter;
         });
@@ -201,9 +215,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         inspectorPanel.innerHTML = `
             <div class="inspector-header">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start">
-                    <h2 class="inspector-title">Causal Breakdown · ${inspectingMetricId}</h2>
+                    <h2 class="inspector-title">
+                        ${isDraftMode ? '<span class="draft-badge">DRAFT PREVIEW</span>' : ''}
+                        Causal Breakdown · ${inspectingMetricId}
+                    </h2>
                     <button class="icon-btn" onclick="closeInspector()">✕</button>
                 </div>
+                ${isDraftMode ? `
+                    <div style="display:flex; gap:8px; margin-bottom:12px">
+                        <div class="draft-badge" style="flex:1; text-align:center">DRAFT PREVIEW</div>
+                        <button class="btn-inspector" style="padding:2px 8px; font-size:0.6rem" onclick="editor_show_diff_ui()">View Diff</button>
+                    </div>
+                ` : ''}
+                ${isDraftMode && !editorState.validation.ok ? `
+                    <div style="background:rgba(255,0,0,0.1); border:1px solid #ff4444; border-radius:8px; padding:8px; margin-bottom:12px; font-size:0.65rem; color:#ff8888">
+                        <strong>⚠️ Validation Error:</strong> ${editorState.validation.errors[0]?.message || 'Invalid Graph Logic'}
+                    </div>
+                ` : ''}
                 <div class="inspector-badges">
                     <span class="badge" title="Current timestamp">t = ${fmtMs(breakdown.t)} ms</span>
                     <span class="badge ${breakdown.replace.active ? 'badge-active' : ''}" title="Replace Priority Overload">Replace: ${breakdown.replace.active ? 'ACTIVE' : 'none'}</span>
@@ -241,7 +269,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             <div class="forensic-card">
                 ${!breakdown.replace.active ? '<div style="font-size:0.7rem; color:var(--text-secondary)">No active replace impact.</div>' : `
                     <div class="forensic-row"><span class="key">Winner</span><span class="val">${breakdown.replace.winner.edge_id}</span></div>
-                    <div class="forensic-row"><span class="key">Priority</span><span class="val">${breakdown.replace.winner.priority}</span></div>
+                    <div class="forensic-row">
+                        <span class="key">Priority</span>
+                        <span class="val">
+                            ${isDraftMode ? `
+                                <input type="number" step="1" value="${breakdown.replace.winner.priority}" 
+                                    style="width:50px; background:rgba(255,255,255,0.1); border:1px solid var(--accent-color); color:white; font-size:0.75rem; border-radius:4px"
+                                    onchange="editor_patch_edge('${breakdown.replace.winner.edge_id}', { priority: parseFloat(this.value) })">
+                            ` : breakdown.replace.winner.priority}
+                        </span>
+                    </div>
                     <div class="forensic-row"><span class="key">Skew</span><span class="val">${fmtMs(breakdown.replace.winner.skew_ms)} ms</span></div>
                     <div class="forensic-row"><span class="key">Window</span><span class="val">[${fmtMs(breakdown.replace.winner.hold_start)} - ${fmtMs(breakdown.replace.winner.hold_end)}]</span></div>
                 `}
@@ -253,13 +290,31 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div style="font-size:0.7rem; margin-bottom:8px">Δ_add: ${fmt(breakdown.blend.delta_add)} | Δ_mul: x${fmt(breakdown.blend.delta_mul)}</div>
                     ${breakdown.blend.add_terms.map(t => `
                         <div class="term-item">
-                            <div style="display:grid"><span class="term-edge">${t.edge_id}</span><span style="font-size:0.6rem; opacity:0.6">src ${fmt(t.src)} · gain ${fmt(t.gain)} · w ${fmt(t.weight)}</span></div>
+                            <div style="display:grid">
+                                <span class="term-edge" onclick="openEdgeEditor('${t.edge_id}')" style="cursor:pointer" title="Click to edit advanced parameters">${t.edge_id} ✎</span>
+                                <span style="font-size:0.6rem; opacity:0.6; display:flex; gap:8px; align-items:center">
+                                    src ${fmt(t.src)}
+                                    ${isDraftMode ? `
+                                        G <input type="number" step="0.1" value="${t.gain}" style="width:40px; background:none; border:1px solid #444; color:white; font-size:0.6rem" onchange="editor_patch_edge('${t.edge_id}', { gain: parseFloat(this.value) })">
+                                        W <input type="number" step="0.1" value="${t.weight}" style="width:40px; background:none; border:1px solid #444; color:white; font-size:0.6rem" onchange="editor_patch_edge('${t.edge_id}', { weight: parseFloat(this.value) })">
+                                    ` : `· gain ${fmt(t.gain)} · w ${fmt(t.weight)}`}
+                                </span>
+                            </div>
                             <span>+${fmt(t.contribution)}</span>
                         </div>
                     `).join('')}
                     ${breakdown.blend.mul_terms.map(t => `
                         <div class="term-item">
-                            <div style="display:grid"><span class="term-edge" style="color:#00ffcc">${t.edge_id}</span><span style="font-size:0.6rem; opacity:0.6">src ${fmt(t.src)} · gain ${fmt(t.gain)} · w ${fmt(t.weight)}</span></div>
+                            <div style="display:grid">
+                                <span class="term-edge" onclick="openEdgeEditor('${t.edge_id}')" style="cursor:pointer; color:#00ffcc" title="Click to edit advanced parameters">${t.edge_id} ✎</span>
+                                <span style="font-size:0.6rem; opacity:0.6; display:flex; gap:8px; align-items:center">
+                                    src ${fmt(t.src)}
+                                    ${isDraftMode ? `
+                                        G <input type="number" step="0.1" value="${t.gain}" style="width:40px; background:none; border:1px solid #444; color:white; font-size:0.6rem" onchange="editor_patch_edge('${t.edge_id}', { gain: parseFloat(this.value) })">
+                                        W <input type="number" step="0.1" value="${t.weight}" style="width:40px; background:none; border:1px solid #444; color:white; font-size:0.6rem" onchange="editor_patch_edge('${t.edge_id}', { weight: parseFloat(this.value) })">
+                                    ` : `· gain ${fmt(t.gain)} · w ${fmt(t.weight)}`}
+                                </span>
+                            </div>
                             <span>x${fmt(t.factor)}</span>
                         </div>
                     `).join('')}
@@ -279,13 +334,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             ${filteredBlocked.map(b => `
                 <div class="forensic-card block-card" style="margin-bottom:8px; border-left: 2px solid ${b.severity === 'error' ? '#ff4444' : (b.severity === 'warn' ? '#ffaa00' : '#00f2ff')}">
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 8px;">
-                        <span class="term-edge" style="color: ${b.severity === 'error' ? '#ff4444' : '#fff'}">${b.edge_id}</span>
+                        <span class="term-edge" onclick="openEdgeEditor('${b.edge_id}')" style="cursor:pointer; color: ${b.severity === 'error' ? '#ff4444' : '#fff'}" title="Click to edit advanced parameters">${b.edge_id} ✎</span>
                         <span class="badge" style="font-size:0.5rem">${b.reason}</span>
                     </div>
                     ${b.message ? `<div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:8px">${b.message}</div>` : ''}
                     <div class="forensic-row"><span class="key">Severity</span><span class="val" style="color: ${b.severity === 'error' ? '#ff4444' : (b.severity === 'warn' ? '#ffaa00' : '#00f2ff')}">${b.severity.toUpperCase()}</span></div>
                     
-                    ${b.skew_ms !== null ? `<div class="forensic-row"><span class="key">Skew</span><span class="val">${fmtMs(b.skew_ms)} ms (max ${b.max_skew_ms})</span></div>` : ''}
+                    ${b.skew_ms !== null ? `
+                        <div class="forensic-row">
+                            <span class="key">Skew</span>
+                            <span class="val">
+                                ${fmtMs(b.skew_ms)} ms 
+                                (max ${isDraftMode && b.reason === 'MAX_SKEW_EXCEEDED' ? `
+                                    <input type="number" step="100" value="${b.max_skew_ms}" 
+                                        style="width:50px; background:none; border:1px solid #444; color:white; font-size:0.6rem" 
+                                        onchange="editor_patch_edge('${b.edge_id}', { max_skew_ms: parseFloat(this.value) })">
+                                ` : b.max_skew_ms})
+                            </span>
+                        </div>
+                    ` : ''}
                     ${b.effect_at_ms !== null ? `<div class="forensic-row"><span class="key">Timing</span><span class="val">Trigger: ${fmtMs(b.fired_at_ms)} | Effect: ${fmtMs(b.effect_at_ms)}</span></div>` : ''}
                     
                     ${b.preview?.would_apply || b.preview?.candidate ? `
@@ -299,9 +366,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             `).join('') || '<div style="font-size:0.7rem; color:var(--text-secondary)">No impacts match filter.</div>'}
 
             <div class="inspector-footer">
-                <button class="btn-inspector" onclick="copyBreakdownJSON()">Copy JSON</button>
-                <button class="btn-inspector" onclick="exportCausalSnapshot()" style="border-color:var(--accent-color)">Export SNAPSHOT (ZIP)</button>
-                <button class="btn-inspector" style="margin-left:auto" onclick="toggleFreeze()">${isFrozen ? 'RESUME' : 'FREEZE FRAME'}</button>
+                ${isDraftMode ? `
+                    <button class="btn-inspector" onclick="editor_discard()" style="border-color:#ff4444">DISCARD DRAFT</button>
+                    <button class="btn-inspector" onclick="editor_apply()" ${!editorState.validation.ok || !editorState.dirty ? 'disabled style="opacity:0.5; cursor:not-allowed"' : 'style="border-color:var(--accent-color); font-weight:bold"'} >APPLY LOGIC</button>
+                ` : `
+                    <button class="btn-inspector" onclick="editor_enter()" style="border-color:var(--accent-color)">Edit Logic</button>
+                    <button class="btn-inspector" onclick="copyBreakdownJSON()">Copy JSON</button>
+                    <button class="btn-inspector" onclick="exportCausalSnapshot()">Export Snapshot (ZIP)</button>
+                    <button class="btn-inspector" style="margin-left:auto" onclick="toggleFreeze()">${isFrozen ? 'RESUME' : 'FREEZE FRAME'}</button>
+                `}
             </div>
         `;
     }
@@ -330,29 +403,74 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!inspectingMetricId) return;
         const zip = new JSZip();
         const tNow = lastRenderTimeMs;
-        const breakdown = currentBreakdowns[inspectingMetricId];
+        const rawBreakdown = currentBreakdowns[inspectingMetricId];
+        const breakdown = CouplingEngine.normalizeBreakdown(rawBreakdown);
 
-        // 1. Metadata
-        const meta = {
-            snapshot_version: "1.1",
-            timestamp_ms: tNow,
-            target_metric: inspectingMetricId,
-            app_version: "UI-nisierung v1.1",
-            exported_at: new Date().toISOString()
-        };
+        // 1. Prepare Content Files
+        const graphJson = JSON.stringify(couplingGraph, null, 2);
+        const breakdownJson = JSON.stringify(breakdown, null, 2);
 
-        // 2. State Mapping
+        // Detailed State Mapping
         const state = {};
         timelineData.forEach(d => {
             state[d.id] = CouplingEngine.sampleAt(d.value.series, tNow);
         });
+        const stateJson = JSON.stringify(state, null, 2);
 
+        // 2. Initial ZIP Assembly
+        zip.file("coupling-graph.json", graphJson);
+        zip.file("breakdown.json", breakdownJson);
+        zip.file("state.json", stateJson);
+
+        // 3. Metadata Preparation (with placeholders for hashes)
+        const meta = {
+            snapshot_version: "causal_snapshot_v1.0",
+            exported_at_iso: new Date().toISOString(),
+            target_metric: inspectingMetricId,
+            t_ms: tNow,
+            breakdown_version: "1.1",
+            spec_version: "causal++_spec_v1",
+            seed: hashStringToSeed(inspectingMetricId), // Simplified repro-key
+            prng: { name: "mulberry32", variant: null },
+            app: {
+                name: "UI-nisierung",
+                version: "1.1.0-audit",
+                build_id: "local-dev",
+                git_commit: null
+            },
+            graph: { path: "coupling-graph.json", sha256: await ForensicUtils.sha256HexFromString(graphJson) },
+            state: { mode: "full", path: "state.json", sha256: await ForensicUtils.sha256HexFromString(stateJson) }
+        };
         zip.file("metadata.json", JSON.stringify(meta, null, 2));
-        zip.file("coupling-graph.json", JSON.stringify(couplingGraph, null, 2));
-        zip.file("breakdown.json", JSON.stringify(breakdown, null, 2));
-        zip.file("state.json", JSON.stringify(state, null, 2));
 
+        // 4. README inclusion
+        const readmeContent = `SHERATAN CAUSAL SNAPSHOT ${meta.exported_at_iso}
+===================================================
+Target: ${meta.target_metric}
+Time:   ${meta.t_ms} ms
+
+CONTENTS:
+- metadata.json: Snapshot context and app parameters.
+- manifest.json: Tamper-evident file hashes.
+- coupling-graph.json: Logic rules and graph structure.
+- breakdown.json: Normalized Causal++ Forensics v1.1.
+- state.json: Values of all metrics at time t.
+
+VALIDATION:
+$ node tools/validate_breakdown.mjs breakdown.json --pretty
+`;
+        zip.file("README.txt", readmeContent);
+
+        // 5. Manifest Building (Finalizes filenames and hashes)
+        const manifest = await ForensicUtils.buildManifestFromZip(zip);
+        zip.file("manifest.json", JSON.stringify(manifest, null, 2));
+
+        // 6. Generate and Download
         const content = await zip.generateAsync({ type: "blob" });
+        const bundleSha = await ForensicUtils.sha256HexFromArrayBuffer(await content.arrayBuffer());
+
+        console.log(`[Audit] Bundle generated. SHA256: ${bundleSha}`);
+
         const link = document.createElement("a");
         link.href = URL.createObjectURL(content);
         link.download = `causal_snapshot_${inspectingMetricId}_t${Math.floor(tNow)}.zip`;
@@ -371,6 +489,110 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
+    // ---- Editor API (Guardrails #1 & #2) ----
+    window.editor_enter = () => {
+        editorState.enabled = true;
+        editorState.draftGraph = JSON.parse(JSON.stringify(couplingGraph));
+        editorState.dirty = false;
+        renderAll();
+    };
+
+    window.editor_discard = () => {
+        editorState.enabled = false;
+        editorState.draftGraph = null;
+        editorState.dirty = false;
+        renderAll();
+    };
+
+    window.editor_apply = () => {
+        const res = CouplingValidator.validate(editorState.draftGraph);
+        if (res.ok) {
+            couplingGraph = JSON.parse(JSON.stringify(editorState.draftGraph));
+            editorState.dirty = false;
+            editorState.enabled = false;
+            renderAll();
+            console.log("✅ Graph Applied to Simulation.");
+        } else {
+            alert("Cannot apply: Graph validation failed.");
+        }
+    };
+
+    // ---- Deep Patch Helper ----
+    function setDeep(obj, path, value) {
+        const parts = path.split('.');
+        let current = obj;
+        for (let i = 0; i < parts.length - 1; i++) {
+            if (!current[parts[i]]) current[parts[i]] = {};
+            current = current[parts[i]];
+        }
+        current[parts[parts.length - 1]] = value;
+    }
+
+    window.editor_patch_edge = (edgeId, path, value) => {
+        if (!editorState.draftGraph) return;
+        const edge = editorState.draftGraph.edges.find(e => e.id === edgeId);
+        if (edge) {
+            setDeep(edge, path, value);
+            editorState.dirty = true;
+            editorState.validation = CouplingValidator.validate(editorState.draftGraph);
+            renderAll();
+        }
+    };
+
+    window.editor_get_diff = () => {
+        if (!editorState.draftGraph) return null;
+        const diff = [];
+        editorState.draftGraph.edges.forEach((dEdge, i) => {
+            const mEdge = couplingGraph.edges.find(e => e.id === dEdge.id);
+            if (!mEdge) {
+                diff.push({ op: "add", path: `/edges/${i}`, value: dEdge });
+            } else if (JSON.stringify(dEdge) !== JSON.stringify(mEdge)) {
+                diff.push({ op: "replace", path: `/edges/${i}`, from: mEdge, to: dEdge });
+            }
+        });
+        return diff;
+    };
+
+    window.openEdgeEditor = (edgeId) => {
+        if (!editorState.enabled) window.editor_enter();
+        const edge = editorState.draftGraph.edges.find(e => e.id === edgeId);
+        if (!edge) return;
+
+        const modal = document.getElementById('edge-editor-modal');
+        document.getElementById('edit-edge-id').textContent = edge.id;
+
+        // Populate inputs
+        document.getElementById('edit-priority').value = edge.priority || 0;
+        document.getElementById('edit-gain').value = edge.impact?.gain || 1;
+        document.getElementById('edit-weight').value = edge.impact?.weight || 1;
+        document.getElementById('edit-skew').value = edge.alignment?.max_skew_ms || 250;
+
+        modal.style.display = 'flex';
+        editorState.editingEdgeId = edgeId;
+    };
+
+    window.saveEdgeChanges = () => {
+        const id = editorState.editingEdgeId;
+        const priority = parseFloat(document.getElementById('edit-priority').value);
+        const gain = parseFloat(document.getElementById('edit-gain').value);
+        const weight = parseFloat(document.getElementById('edit-weight').value);
+        const skew = parseFloat(document.getElementById('edit-skew').value);
+
+        editor_patch_edge(id, 'priority', priority);
+        editor_patch_edge(id, 'impact.gain', gain);
+        editor_patch_edge(id, 'impact.weight', weight);
+        editor_patch_edge(id, 'alignment.max_skew_ms', skew);
+
+        document.getElementById('edge-editor-modal').style.display = 'none';
+    };
+
+    window.editor_show_diff_ui = () => {
+        const diff = editor_get_diff();
+        if (!diff || diff.length === 0) { alert("No changes detected."); return; }
+        const txt = diff.map(d => `${d.op.toUpperCase()} ${d.path}\n  ${d.op === 'replace' ? 'from ' + JSON.stringify(d.from) : ''}\n  to   ${JSON.stringify(d.to || d.value)}`).join('\n\n');
+        alert("DRAFT DIFF:\n\n" + txt);
+    };
+
     function renderAll() {
         const tNowMs = (video.currentTime || 0) * 1000;
         if (tNowMs + 250 < lastRenderTimeMs) triggerRuntime.reset();
@@ -381,10 +603,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             valuesById[d.id] = { obj: d, series: d.value.series.map(p => ({ t: p.t_ms, v: p.v })) };
         });
 
+        // 1. Simulation Path (Always Master)
         const activeEdgeIds = EventTriggerEngine.computeTriggersAtTime(valuesById, couplingGraph, tNowMs, triggerRuntime);
         const { values, breakdowns } = CouplingEngine.applyCouplingGraph(valuesById, couplingGraph, tNowMs, activeEdgeIds, triggerRuntime);
 
         if (!isFrozen) currentBreakdowns = breakdowns;
+
+        // 2. Preview Path (Draft Mode Only)
+        if (editorState.enabled && editorState.draftGraph && editorState.validation.ok) {
+            const draftTriggers = EventTriggerEngine.computeTriggersAtTime(valuesById, editorState.draftGraph, tNowMs, new TriggerRuntime()); // Isolated runtime for preview
+            const { breakdowns: db } = CouplingEngine.applyCouplingGraph(valuesById, editorState.draftGraph, tNowMs, draftTriggers, new TriggerRuntime());
+            editorState.previewBreakdowns = db;
+        }
 
         renderTimelines(values);
         renderAnalysisTags();

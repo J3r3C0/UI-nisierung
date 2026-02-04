@@ -723,6 +723,12 @@ body {
     font-family: monospace;
     font-weight: 600;
     color: var(--accent-color);
+    transition: color 0.1s;
+}
+
+.term-edge:hover {
+    color: white;
+    text-decoration: underline;
 }
 
 .block-card {
@@ -772,6 +778,64 @@ body {
     background: var(--accent-color);
     color: black;
     border-color: var(--accent-color);
+}
+
+.btn-inspector:disabled {
+    cursor: not-allowed;
+    opacity: 0.3;
+    filter: grayscale(1);
+}
+
+.inspector-header input,
+.forensic-card input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    color: white;
+    padding: 2px 4px;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.inspector-header input:focus,
+.forensic-card input:focus {
+    border-color: var(--accent-color);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.draft-badge {
+    color: #ffaa00;
+    font-size: 0.6rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border: 1px solid #ffaa00;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 170, 0, 0.1);
+}
+
+.modal-content.small {
+    max-width: 400px;
+}
+
+.flex-between {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.flex-center {
+    display: flex;
+    align-items: center;
+}
+
+.gap-10 {
+    gap: 10px;
+}
+
+.mt-20 {
+    margin-top: 20px;
 }
 
 .collapsible-trigger {

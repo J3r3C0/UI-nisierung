@@ -1,12 +1,15 @@
 {
   "name": "ui-nisierung",
   "version": "1.1.0",
-  "description": "Sheratan Causal Forensics",
+  "main": "app.js",
   "type": "module",
   "scripts": {
-    "validate:breakdown": "node tools/validate_breakdown.mjs"
+    "test": "node tests/causal-forensics.test.js",
+    "validate:breakdown": "node tools/validate_breakdown.mjs",
+    "validate:snapshot": "node tools/validate_snapshot_bundle.mjs"
   },
   "dependencies": {
-    "ajv": "^8.17.1"
+    "ajv": "^8.12.0",
+    "jszip": "^3.10.1"
   }
 }

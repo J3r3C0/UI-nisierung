@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sheratan.local/schemas/causal_snapshot_manifest_v1.0.schema.json",
+  "title": "Causal Snapshot Manifest v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "created_at_iso", "files"],
+  "properties": {
+    "manifest_version": {
+      "type": "string",
+      "const": "causal_manifest_v1.0"
+    },
+    "created_at_iso": {
+      "type": "string",
+      "description": "UTC timestamp when manifest was created (ISO 8601).",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fileEntry" }
+    },
+    "bundle_sha256": {
+      "type": ["string", "null"],
+      "description": "Optional: sha256 of the whole zip bytes (hex).",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "notes": { "type": ["string", "null"], "default": null }
+  },
+  "$defs": {
+    "fileEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path inside zip (e.g., metadata.json)."
+        },
+        "sha256": {
+          "type": "string",
+          "description": "Hex SHA256 of file contents.",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Byte size of file contents."
+        },
+        "content_type": {
+          "type": ["string", "null"],
+          "default": null
+        }
+      }
+    }
+  }
+}

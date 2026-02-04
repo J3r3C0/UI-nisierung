@@ -22,7 +22,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         dirty: false,             // Draft != Master
         draftGraph: null,         // Cloned instance for editing
         validation: { ok: true, errors: [] },
-        previewBreakdowns: {}     // Computed from draftGraph
+        previewBreakdowns: {},    // Computed from draftGraph for current T
+        editingEdgeId: null,
+        history: [],              // For Undo
+        redoStack: []             // For Redo
     };
 
     let lastRenderTimeMs = 0;
@@ -159,10 +162,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     function drawGraph(label, tNowMs, activeEdgeIds = new Set()) {
         const metric = timelineData.find(m => m.label === label);
         if (!metric) return;
-        const existingMarkers = document.querySelectorAll('.event-marker');
+
+        const svg = document.getElementById('analysis-graph');
+        const existingMarkers = svg.querySelectorAll('.event-marker, .draft-path');
         existingMarkers.forEach(m => m.remove());
+
         const visibleSeries = metric.value.series.filter(p => p.t_ms <= tNowMs);
         let pathData = [];
+
+        // 1. Master Path
         if (visibleSeries.length > 0) {
             visibleSeries.forEach((p) => {
                 const x = (p.t_ms / durationMs) * 100;
@@ -170,6 +178,32 @@ document.addEventListener('DOMContentLoaded', async () => {
                 pathData.push(`${x},${y}`);
             });
             graphPath.setAttribute('d', `M ${pathData.join(' L ')}`);
+        } else { graphPath.setAttribute('d', ''); }
+
+        // 2. Draft Ghost Curve (Preview)
+        if (editorState.enabled && editorState.draftGraph && editorState.validation.ok) {
+            const draftPathData = [];
+            const step = durationMs / 100; // 100 samples
+            for (let t = 0; t <= tNowMs; t += step) {
+                const val = computeDraftValueAt(metric.id, t);
+                const x = (t / durationMs) * 100;
+                const y = 100 - val;
+                draftPathData.push(`${x},${y}`);
+            }
+
+            const draftPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            draftPath.setAttribute('d', `M ${draftPathData.join(' L ')}`);
+            draftPath.setAttribute('class', 'draft-path');
+            draftPath.setAttribute('fill', 'none');
+            draftPath.setAttribute('stroke', '#ffaa00');
+            draftPath.setAttribute('stroke-dasharray', '4,2');
+            draftPath.setAttribute('stroke-width', '1.5');
+            draftPath.setAttribute('opacity', '0.7');
+            svg.insertBefore(draftPath, graphPath);
+        }
+
+        // 3. Markers
+        if (visibleSeries.length > 0) {
             triggerRuntime.fired.filter(ev => ev.tMs <= tNowMs).forEach(ev => {
                 const edge = couplingGraph.edges.find(e => e.id === ev.edgeId);
                 if (!edge || (edge.from !== metric.id && edge.to !== metric.id)) return;
@@ -224,6 +258,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ${isDraftMode ? `
                     <div style="display:flex; gap:8px; margin-bottom:12px">
                         <div class="draft-badge" style="flex:1; text-align:center">DRAFT PREVIEW</div>
+                        <button class="btn-inspector" style="padding:2px 8px; font-size:0.6rem" onclick="editor_undo()" ${editorState.history.length === 0 ? 'disabled style="opacity:0.3"' : ''}>Undo</button>
+                        <button class="btn-inspector" style="padding:2px 8px; font-size:0.6rem" onclick="editor_redo()" ${editorState.redoStack.length === 0 ? 'disabled style="opacity:0.3"' : ''}>Redo</button>
                         <button class="btn-inspector" style="padding:2px 8px; font-size:0.6rem" onclick="editor_show_diff_ui()">View Diff</button>
                     </div>
                 ` : ''}
@@ -399,7 +435,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     window.setBlockedFilter = (f) => { currentBlockedFilter = f; renderInspector(); };
-    window.exportCausalSnapshot = async () => {
+    window.exportCausalSnapshot = async (options = {}) => {
         if (!inspectingMetricId) return;
         const zip = new JSZip();
         const tNow = lastRenderTimeMs;
@@ -473,7 +509,8 @@ $ node tools/validate_breakdown.mjs breakdown.json --pretty
 
         const link = document.createElement("a");
         link.href = URL.createObjectURL(content);
-        link.download = `causal_snapshot_${inspectingMetricId}_t${Math.floor(tNow)}.zip`;
+        const prefix = options.isAuto ? "auto_preservation" : "causal_snapshot";
+        link.download = `${prefix}_${inspectingMetricId}_t${Math.floor(tNow)}.zip`;
         link.click();
 
         console.log(`✅ Snapshot exported: ${link.download}`);
@@ -501,17 +538,28 @@ $ node tools/validate_breakdown.mjs breakdown.json --pretty
         editorState.enabled = false;
         editorState.draftGraph = null;
         editorState.dirty = false;
+        editorState.history = [];
+        editorState.redoStack = [];
         renderAll();
     };
 
-    window.editor_apply = () => {
+    window.editor_apply = async () => {
         const res = CouplingValidator.validate(editorState.draftGraph);
         if (res.ok) {
+            // ✅ Guardrail #5: Auto-Snapshot
+            console.log("[Audit] Auto-Snapshot triggered before APPLY...");
+            if (inspectingMetricId) {
+                await exportCausalSnapshot({ isAuto: true });
+            }
+
             couplingGraph = JSON.parse(JSON.stringify(editorState.draftGraph));
             editorState.dirty = false;
             editorState.enabled = false;
+            editorState.history = [];
+            editorState.redoStack = [];
+
             renderAll();
-            console.log("✅ Graph Applied to Simulation.");
+            console.log("✅ Graph Applied to Simulation. Forensics preserved.");
         } else {
             alert("Cannot apply: Graph validation failed.");
         }
@@ -528,8 +576,33 @@ $ node tools/validate_breakdown.mjs breakdown.json --pretty
         current[parts[parts.length - 1]] = value;
     }
 
+    function pushHistory() {
+        editorState.history.push(JSON.stringify(editorState.draftGraph));
+        if (editorState.history.length > 50) editorState.history.shift();
+        editorState.redoStack = [];
+    }
+
+    window.editor_undo = () => {
+        if (editorState.history.length === 0) return;
+        editorState.redoStack.push(JSON.stringify(editorState.draftGraph));
+        editorState.draftGraph = JSON.parse(editorState.history.pop());
+        editorState.dirty = true;
+        editorState.validation = CouplingValidator.validate(editorState.draftGraph);
+        renderAll();
+    };
+
+    window.editor_redo = () => {
+        if (editorState.redoStack.length === 0) return;
+        editorState.history.push(JSON.stringify(editorState.draftGraph));
+        editorState.draftGraph = JSON.parse(editorState.redoStack.pop());
+        editorState.dirty = true;
+        editorState.validation = CouplingValidator.validate(editorState.draftGraph);
+        renderAll();
+    };
+
     window.editor_patch_edge = (edgeId, path, value) => {
         if (!editorState.draftGraph) return;
+        pushHistory();
         const edge = editorState.draftGraph.edges.find(e => e.id === edgeId);
         if (edge) {
             setDeep(edge, path, value);
@@ -658,6 +731,18 @@ $ node tools/validate_breakdown.mjs breakdown.json --pretty
         renderAll();
     });
     function syncLoop() { if (!video.paused) renderAll(); requestAnimationFrame(syncLoop); }
-    requestAnimationFrame(syncLoop);
+    function computeDraftValueAt(metricId, tMs) {
+        if (!editorState.draftGraph) return 0;
+        const valuesById = {};
+        timelineData.forEach(d => {
+            valuesById[d.id] = { obj: d, series: d.value.series.map(p => ({ t: p.t_ms, v: p.v })) };
+        });
+        // Isolated mini-runtime for sampling
+        const tempRuntime = new TriggerRuntime();
+        const activeIds = EventTriggerEngine.computeTriggersAtTime(valuesById, editorState.draftGraph, tMs, tempRuntime);
+        const { values } = CouplingEngine.applyCouplingGraph(valuesById, editorState.draftGraph, tMs, activeIds, tempRuntime);
+        return values[metricId] ?? 0;
+    }
+
     renderAll();
 });
